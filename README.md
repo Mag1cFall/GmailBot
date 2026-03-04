@@ -9,6 +9,7 @@ Telegram Bot，通过 AI 管理你的 Gmail 收件箱。
 - 🗓 定时每日摘要：可设置多个时间点自动生成邮件摘要
 - 🔔 新邮件检测 + AI 智能过滤推送（只推送重要邮件）
 - 💬 多会话管理：支持创建、切换、清空 AI 会话
+- ⚙️ 配置热重载：通过 Telegram 按钮直接修改模型、API、超时等配置，无需重启
 
 ## 技术栈
 
@@ -89,6 +90,7 @@ nohup ./gmailbot > bot.log 2>&1 &
 | `/sessions` | 查看会话列表 |
 | `/switch <id>` | 切换会话 |
 | `/clear` | 清空当前会话 |
+| `/config` | 热修改配置（模型/API/超时），InlineKeyboard 按钮式 |
 
 直接发送文本即可与 AI 助手自由对话，AI 可通过 function calling 代你操作 Gmail。
 

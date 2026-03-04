@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"gmailbot/config"
 	"gmailbot/internal/gmail"
 
 	tele "gopkg.in/telebot.v3"
@@ -18,6 +21,11 @@ import (
 var digestTimePattern = regexp.MustCompile(`^([01]\d|2[0-3]):([0-5]\d)$`)
 var headingRe = regexp.MustCompile(`^#{1,6}\s+(.+)$`)
 var boldRe = regexp.MustCompile(`\*\*(.+?)\*\*`)
+
+var (
+	pendingConfigMu sync.Mutex
+	pendingConfig   = map[int64]string{}
+)
 
 func (a *App) registerHandlers() {
 	a.bot.Handle("/start", a.handleStart)
@@ -47,6 +55,9 @@ func (a *App) registerHandlers() {
 	a.bot.Handle("/switch", a.handleSwitchSession)
 	a.bot.Handle("/clear", a.handleClearSession)
 
+	a.bot.Handle("/config", a.handleConfig)
+	a.bot.Handle(&tele.Btn{Unique: "cfg"}, a.handleConfigCallback)
+
 	a.bot.Handle(tele.OnText, a.handleFreeText)
 }
 
@@ -73,6 +84,7 @@ func (a *App) registerCommands() {
 		{Text: "sessions", Description: "会话列表"},
 		{Text: "switch", Description: "切换会话 /switch <id前缀>"},
 		{Text: "clear", Description: "清空当前会话"},
+		{Text: "config", Description: "热修改配置项（AI模型/API/超时）"},
 		{Text: "help", Description: "帮助"},
 	}
 	if err := a.bot.SetCommands(commands); err != nil {
@@ -97,17 +109,32 @@ func (a *App) handleStart(c tele.Context) error {
 
 func (a *App) handleHelp(c tele.Context) error {
 	return c.Send(
-		"可用命令：\n" +
-			"/start /auth /code /revoke\n" +
-			"/inbox [n] /unread /read <id> /search <query> /labels\n" +
-			"/digest\n" +
-			"/setdigest 08:00,12:00,16:00,20:00 （多时间点逗号分隔）\n" +
-			"/canceldigest\n" +
-			"/setcheck <minutes> /cancelcheck\n" +
-			"/aipush on|off （AI智能过滤，只推送重要邮件）\n" +
-			"/schedule /status\n" +
-			"/new /sessions /switch <id> /clear\n" +
-			"说明：任何自由文本会自动进入 AI 会话。",
+		"📬 *邮件操作*\n"+
+			"/inbox \\[n] — 查看收件箱（默认10封）\n"+
+			"/unread — 查看未读邮件\n"+
+			"/read <id> — 查看邮件正文\n"+
+			"/search <query> — 搜索邮件\n"+
+			"/labels — 查看标签列表\n\n"+
+			"🗓 *定时任务*\n"+
+			"/digest — 立即生成每日摘要\n"+
+			"/setdigest 08:00,12:00 — 设置定时摘要\n"+
+			"/canceldigest — 取消定时摘要\n"+
+			"/setcheck <分钟> — 设置新邮件检查间隔\n"+
+			"/cancelcheck — 停止自动检查\n"+
+			"/aipush on|off — AI智能过滤推送\n"+
+			"/schedule — 查看定时任务配置\n\n"+
+			"🤖 *AI 会话*\n"+
+			"/new \\[标题] — 新建会话\n"+
+			"/sessions — 会话列表\n"+
+			"/switch <id> — 切换会话\n"+
+			"/clear — 清空当前会话\n"+
+			"直接发送文本即可与 AI 对话\n\n"+
+			"⚙️ *系统*\n"+
+			"/config — 热修改配置（模型/API/超时）\n"+
+			"/status — 查看 Bot 运行状态\n"+
+			"/auth — Gmail 授权\n"+
+			"/revoke — 撤销授权",
+		tele.ModeMarkdown,
 	)
 }
 
@@ -525,6 +552,18 @@ func (a *App) handleFreeText(c tele.Context) error {
 	if text == "" || strings.HasPrefix(text, "/") {
 		return nil
 	}
+
+	pendingConfigMu.Lock()
+	key, hasPending := pendingConfig[c.Sender().ID]
+	if hasPending {
+		delete(pendingConfig, c.Sender().ID)
+	}
+	pendingConfigMu.Unlock()
+
+	if hasPending {
+		return a.applyConfigValue(c, key, text)
+	}
+
 	ctx, cancel := a.aiCtx()
 	defer cancel()
 
@@ -668,4 +707,65 @@ func trimForTelegram(text string, max int) string {
 		return text
 	}
 	return text[:max] + "..."
+}
+
+func (a *App) handleConfig(c tele.Context) error {
+	markup := &tele.ReplyMarkup{}
+	rows := make([][]tele.InlineButton, 0, len(config.EditableKeys))
+	for _, key := range config.EditableKeys {
+		val := os.Getenv(key)
+		display := key + ": " + val
+		if len(display) > 42 {
+			display = key + ": " + val[:32] + "..."
+		}
+		rows = append(rows, []tele.InlineButton{{
+			Unique: "cfg",
+			Text:   display,
+			Data:   key,
+		}})
+	}
+	markup.InlineKeyboard = rows
+	return c.Send("⚙️ 点击要修改的配置项：", markup)
+}
+
+func (a *App) handleConfigCallback(c tele.Context) error {
+	key := c.Callback().Data
+	if key == "" {
+		return c.Respond()
+	}
+	valid := false
+	for _, k := range config.EditableKeys {
+		if k == key {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return c.Respond(&tele.CallbackResponse{Text: "无效的配置项"})
+	}
+
+	pendingConfigMu.Lock()
+	pendingConfig[c.Sender().ID] = key
+	pendingConfigMu.Unlock()
+
+	currentVal := os.Getenv(key)
+	_ = c.Respond()
+	return c.Send(fmt.Sprintf("🔧 *%s*\n当前值: `%s`\n\n请发送新的值：", key, currentVal), tele.ModeMarkdown)
+}
+
+func (a *App) applyConfigValue(c tele.Context, key, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return c.Send("❌ 值不能为空，操作取消。")
+	}
+
+	if err := config.UpdateEnvFile(key, value); err != nil {
+		return c.Send("❌ 写入 .env 失败：" + err.Error())
+	}
+
+	newCfg := config.Load()
+	a.ai.Reload(newCfg)
+	a.cfg = newCfg
+
+	return c.Send(fmt.Sprintf("✅ %s 已更新为: `%s`\n配置已热重载生效。", key, value), tele.ModeMarkdown)
 }

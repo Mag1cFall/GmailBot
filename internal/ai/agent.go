@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"gmailbot/config"
 	"gmailbot/internal/gmail"
@@ -29,6 +30,7 @@ const langRules = `
 `
 
 type Agent struct {
+	mu           sync.RWMutex
 	client       *openai.Client
 	model        string
 	gmailService *gmail.Service
@@ -52,6 +54,27 @@ func NewAgent(cfg config.Config, gmailService *gmail.Service, st *store.Store) *
 - 简洁有力，列举时用编号或符号列表
 - 涉及金融/安全类邮件时附上简短风险提示` + langRules,
 	}
+}
+
+func (a *Agent) Reload(cfg config.Config) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	clientConfig := openai.DefaultConfig(cfg.AIAPIKey)
+	clientConfig.BaseURL = strings.TrimSuffix(cfg.AIBaseURL, "/")
+	a.client = openai.NewClientWithConfig(clientConfig)
+	a.model = cfg.AIModel
+}
+
+func (a *Agent) Model() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.model
+}
+
+func (a *Agent) snapshot() (*openai.Client, string) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.client, a.model
 }
 
 func (a *Agent) HandleUserMessage(ctx context.Context, tgUserID int64, userText string) (string, error) {
@@ -111,8 +134,9 @@ func (a *Agent) GenerateDailyDigest(ctx context.Context, tgUserID int64) (string
 	if marshalErr != nil {
 		return "", marshalErr
 	}
+	client, model := a.snapshot()
 	req := openai.ChatCompletionRequest{
-		Model: a.model,
+		Model: model,
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
@@ -137,7 +161,7 @@ func (a *Agent) GenerateDailyDigest(ctx context.Context, tgUserID int64) (string
 		},
 	}
 
-	resp, err := a.client.CreateChatCompletion(ctx, req)
+	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -164,8 +188,9 @@ func (a *Agent) JudgeEmailImportance(ctx context.Context, tgUserID int64, email 
 		email.Subject, email.From, email.Snippet,
 	)
 
-	resp, err := a.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-		Model: a.model,
+	client, model := a.snapshot()
+	resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: model,
 		Messages: []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleUser, Content: prompt},
 		},
@@ -201,9 +226,11 @@ func (a *Agent) chatWithTools(ctx context.Context, tgUserID int64, messages []op
 	chatMessages := make([]openai.ChatCompletionMessage, len(messages))
 	copy(chatMessages, messages)
 
+	client, model := a.snapshot()
+
 	for i := 0; i < 4; i++ {
-		resp, err := a.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model:    a.model,
+		resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+			Model:    model,
 			Messages: chatMessages,
 			Tools:    tools,
 		})

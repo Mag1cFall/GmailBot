@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -83,4 +84,38 @@ func (c Config) String() string {
 		c.AIModel,
 		c.OAuthRedirectURL,
 	)
+}
+
+var EditableKeys = []string{
+	"AI_MODEL",
+	"AI_BASE_URL",
+	"AI_API_KEY",
+	"AI_TIMEOUT_SEC",
+	"TELEGRAM_TIMEOUT_SEC",
+}
+
+func UpdateEnvFile(key, value string) error {
+	data, err := os.ReadFile(".env")
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) == 2 && parts[0] == key {
+			lines[i] = key + "=" + value
+			found = true
+			break
+		}
+	}
+	if !found {
+		lines = append(lines, key+"="+value)
+	}
+	os.Setenv(key, value)
+	return os.WriteFile(".env", []byte(strings.Join(lines, "\n")), 0644)
 }
