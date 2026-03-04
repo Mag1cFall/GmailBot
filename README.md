@@ -40,9 +40,9 @@ cp .env.example .env
 | `GOOGLE_CLIENT_ID` | Google OAuth Client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth Client Secret |
 | `OAUTH_REDIRECT_URL` | OAuth 回调地址，本地部署填 `http://localhost` |
-| `AI_BASE_URL` | AI API 端点，如 `https://api.openai.com/v1` |
+| `AI_BASE_URL` | OpenAI Compatible API 端点，如 `https://api.openai.com/v1` |
 | `AI_API_KEY` | AI API Key |
-| `AI_MODEL` | 模型名称，如 `gpt-4o` |
+| `AI_MODEL` | 模型名称，如 `gpt-5.3-codex(xhigh)` |
 | `DB_PATH` | SQLite 数据库路径，默认 `./data/gmailbot.db` |
 | `TELEGRAM_TIMEOUT_SEC` | Telegram 请求超时（秒） |
 | `AI_TIMEOUT_SEC` | AI 请求超时（秒） |
@@ -109,6 +109,4 @@ gmailbot/
 └── go.sum
 ```
 
-## License
 
-MIT
