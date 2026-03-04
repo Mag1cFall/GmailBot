@@ -1,0 +1,86 @@
+package config
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+type Config struct {
+	BotToken           string
+	GoogleClientID     string
+	GoogleClientSecret string
+	OAuthRedirectURL   string
+	AIBaseURL          string
+	AIAPIKey           string
+	AIModel            string
+	DBPath             string
+	TelegramTimeoutSec int
+	AITimeoutSec       int
+}
+
+func Load() Config {
+	if err := godotenv.Load(); err != nil {
+		log.Println("no .env file, reading from environment")
+	}
+	cfg := Config{
+		BotToken:           mustGet("BOT_TOKEN"),
+		GoogleClientID:     mustGet("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: mustGet("GOOGLE_CLIENT_SECRET"),
+		OAuthRedirectURL:   getOrDefault("OAUTH_REDIRECT_URL", "http://localhost"),
+		AIBaseURL:          mustGet("AI_BASE_URL"),
+		AIAPIKey:           mustGet("AI_API_KEY"),
+		AIModel:            mustGet("AI_MODEL"),
+		DBPath:             getOrDefault("DB_PATH", "./data/gmailbot.db"),
+		TelegramTimeoutSec: getIntOrDefault("TELEGRAM_TIMEOUT_SEC", 10),
+		AITimeoutSec:       getIntOrDefault("AI_TIMEOUT_SEC", 90),
+	}
+	if cfg.TelegramTimeoutSec <= 0 {
+		cfg.TelegramTimeoutSec = 10
+	}
+	if cfg.AITimeoutSec <= 0 {
+		cfg.AITimeoutSec = int((90 * time.Second).Seconds())
+	}
+	return cfg
+}
+
+func mustGet(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("missing required env: %s", key)
+	}
+	return v
+}
+
+func getOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func getIntOrDefault(key string, def int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("invalid integer env %s=%q, fallback to %d", key, raw, def)
+		return def
+	}
+	return v
+}
+
+func (c Config) String() string {
+	return fmt.Sprintf(
+		"db=%s ai_model=%s oauth_redirect=%s",
+		c.DBPath,
+		c.AIModel,
+		c.OAuthRedirectURL,
+	)
+}
