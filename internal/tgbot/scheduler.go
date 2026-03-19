@@ -3,51 +3,54 @@ package tgbot
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"gmailbot/internal/ai"
 	"gmailbot/internal/gmail"
+	"gmailbot/internal/platform"
 	"gmailbot/internal/store"
 
 	"github.com/robfig/cron/v3"
-	tele "gopkg.in/telebot.v3"
 )
 
-type Scheduler struct {
-	cron *cron.Cron
-	bot  *tele.Bot
+type SendFunc func(ctx context.Context, platformName, userID string, resp platform.UnifiedResponse) error
 
-	store *store.Store
-	gmail *gmail.Service
-	ai    *ai.Agent
-
-	mu          sync.Mutex
-	lastCheck   map[int64]time.Time
-	lastDigest  map[string]string
-	initialized map[int64]bool
+type schedulerMailService interface {
+	ListEmails(ctx context.Context, tgUserID int64, n int, query string) ([]gmail.EmailSummary, error)
 }
 
-func NewScheduler(bot *tele.Bot, st *store.Store, gmailService *gmail.Service, agent *ai.Agent) *Scheduler {
-	c := cron.New(
-		cron.WithSeconds(),
-		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
-	)
+type schedulerAgent interface {
+	JudgeEmailImportance(ctx context.Context, tgUserID int64, subject, from, snippet string) (bool, string, error)
+	GenerateDailyDigest(ctx context.Context, tgUserID int64) (string, error)
+}
+
+type Scheduler struct {
+	cron  *cron.Cron
+	send  SendFunc
+	store *store.Store
+	gmail schedulerMailService
+	ai    schedulerAgent
+
+	mu          sync.Mutex
+	lastCheck   map[string]time.Time
+	lastDigest  map[string]string
+	initialized map[string]bool
+}
+
+func NewScheduler(st *store.Store, gmailService schedulerMailService, agent schedulerAgent, send SendFunc) *Scheduler {
+	c := cron.New(cron.WithSeconds(), cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)))
 	s := &Scheduler{
 		cron:        c,
-		bot:         bot,
+		send:        send,
 		store:       st,
 		gmail:       gmailService,
 		ai:          agent,
-		lastCheck:   make(map[int64]time.Time),
-		lastDigest:  make(map[string]string),
-		initialized: make(map[int64]bool),
+		lastCheck:   map[string]time.Time{},
+		lastDigest:  map[string]string{},
+		initialized: map[string]bool{},
 	}
-	if _, err := c.AddFunc("0 * * * * *", s.runMinuteTasks); err != nil {
-		log.Printf("register scheduler task failed: %v", err)
-	}
+	_, _ = c.AddFunc("0 * * * * *", s.runMinuteTasks)
 	return s
 }
 
@@ -66,10 +69,8 @@ func (s *Scheduler) Stop() {
 func (s *Scheduler) runMinuteTasks() {
 	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
 	defer cancel()
-
 	users, err := s.store.ListAuthorizedUsers(ctx)
 	if err != nil {
-		log.Printf("scheduler list users failed: %v", err)
 		return
 	}
 	now := time.Now()
@@ -84,30 +85,28 @@ func (s *Scheduler) runMinuteTasks() {
 }
 
 func (s *Scheduler) shouldCheck(user store.User, now time.Time) bool {
-	interval := user.CheckIntervalMin
-	if interval <= 0 {
+	if user.CheckIntervalMin <= 0 {
 		return false
 	}
+	identity := schedulerIdentity(user)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	last, ok := s.lastCheck[user.TgUserID]
-	if !ok || now.Sub(last) >= time.Duration(interval)*time.Minute {
-		s.lastCheck[user.TgUserID] = now
+	last, ok := s.lastCheck[identity]
+	if !ok || now.Sub(last) >= time.Duration(user.CheckIntervalMin)*time.Minute {
+		s.lastCheck[identity] = now
 		return true
 	}
 	return false
 }
 
-// shouldDigest 支持多時間點，任一匹配且當天未發送過即觸發
 func (s *Scheduler) shouldDigest(user store.User, now time.Time) bool {
 	if len(user.DigestTimes) == 0 {
 		return false
 	}
-	currentHHMM := now.Format("15:04")
+	current := now.Format("15:04")
 	matched := false
-	for _, t := range user.DigestTimes {
-		if currentHHMM == t {
+	for _, item := range user.DigestTimes {
+		if current == item {
 			matched = true
 			break
 		}
@@ -115,9 +114,7 @@ func (s *Scheduler) shouldDigest(user store.User, now time.Time) bool {
 	if !matched {
 		return false
 	}
-
-	// key = userID + 時間點，防止同一時間點當天重複觸發
-	key := fmt.Sprintf("%d_%s_%s", user.TgUserID, now.Format("2006-01-02"), currentHHMM)
+	key := fmt.Sprintf("%s_%s_%s", schedulerIdentity(user), now.Format("2006-01-02"), current)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.lastDigest[key] == "sent" {
@@ -135,107 +132,91 @@ func (s *Scheduler) pollNewEmails(ctx context.Context, user store.User) {
 	query := fmt.Sprintf("is:unread newer_than:%dm", interval+1)
 	emails, err := s.gmail.ListEmails(ctx, user.TgUserID, 20, query)
 	if err != nil {
-		log.Printf("poll unread failed user=%d err=%v", user.TgUserID, err)
 		return
 	}
+	identity := schedulerIdentity(user)
 	if len(emails) == 0 {
-		s.setInitialized(user.TgUserID)
+		s.setInitialized(identity)
 		return
 	}
-
-	if !s.isInitialized(user.TgUserID) {
+	if !s.isInitialized(identity) {
 		for _, item := range emails {
-			if markErr := s.store.MarkEmailSeen(ctx, user.TgUserID, item.ID); markErr != nil {
-				log.Printf("mark baseline seen failed user=%d id=%s err=%v", user.TgUserID, item.ID, markErr)
-			}
+			_ = s.store.MarkEmailSeen(ctx, user.TgUserID, item.ID)
 		}
-		s.setInitialized(user.TgUserID)
+		s.setInitialized(identity)
 		return
 	}
-
 	for i := len(emails) - 1; i >= 0; i-- {
 		item := emails[i]
 		seen, seenErr := s.store.IsEmailSeen(ctx, user.TgUserID, item.ID)
-		if seenErr != nil {
-			log.Printf("check seen failed user=%d id=%s err=%v", user.TgUserID, item.ID, seenErr)
+		if seenErr != nil || seen {
 			continue
 		}
-		if seen {
-			continue
-		}
-
 		if user.AIPushEnabled {
 			s.pushWithAIFilter(ctx, user, item)
 		} else {
-			s.pushEmailNotify(user.TgUserID, item, "")
+			s.pushEmailNotify(context.Background(), user, item, "")
 		}
-
-		if markErr := s.store.MarkEmailSeen(ctx, user.TgUserID, item.ID); markErr != nil {
-			log.Printf("mark seen failed user=%d id=%s err=%v", user.TgUserID, item.ID, markErr)
-		}
+		_ = s.store.MarkEmailSeen(ctx, user.TgUserID, item.ID)
 	}
 }
 
-// pushWithAIFilter 讓 AI 判斷是否重要，重要才推送，並附帶一句話摘要
 func (s *Scheduler) pushWithAIFilter(ctx context.Context, user store.User, item gmail.EmailSummary) {
 	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-
-	verdict, summary, err := s.ai.JudgeEmailImportance(aiCtx, user.TgUserID, item)
+	verdict, summary, err := s.ai.JudgeEmailImportance(aiCtx, user.TgUserID, item.Subject, item.From, item.Snippet)
 	if err != nil {
-		log.Printf("ai judge failed user=%d id=%s err=%v, fallback to push", user.TgUserID, item.ID, err)
-		s.pushEmailNotify(user.TgUserID, item, "")
+		s.pushEmailNotify(context.Background(), user, item, "")
 		return
 	}
 	if !verdict {
-		log.Printf("ai filtered email user=%d id=%s subject=%q", user.TgUserID, item.ID, item.Subject)
 		return
 	}
-	s.pushEmailNotify(user.TgUserID, item, summary)
+	s.pushEmailNotify(context.Background(), user, item, summary)
 }
 
-func (s *Scheduler) pushEmailNotify(tgUserID int64, item gmail.EmailSummary, aiSummary string) {
+func (s *Scheduler) pushEmailNotify(ctx context.Context, user store.User, item gmail.EmailSummary, aiSummary string) {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📬 *新邮件*\n*主题:* %s\n*发件人:* %s\nID: `%s`",
-		item.Subject, item.From, item.ID))
+	sb.WriteString(fmt.Sprintf("📬 *新邮件*\n*主题:* %s\n*发件人:* %s\nID: `%s`", item.Subject, item.From, item.ID))
 	if aiSummary != "" {
 		sb.WriteString("\n\n💡 " + aiSummary)
 	}
 	sb.WriteString(fmt.Sprintf("\n\n/read %s", item.ID))
-
-	if _, err := s.bot.Send(&tele.User{ID: tgUserID}, sb.String(), tele.ModeMarkdown); err != nil {
-		// 降級純文本
-		plain := fmt.Sprintf("📬 新邮件\n主题: %s\n发件人: %s\nID: %s\n\n/read %s",
-			item.Subject, item.From, item.ID, item.ID)
-		if _, err2 := s.bot.Send(&tele.User{ID: tgUserID}, plain); err2 != nil {
-			log.Printf("send notify failed user=%d id=%s err=%v", tgUserID, item.ID, err2)
-		}
+	if s.send != nil {
+		_ = s.send(ctx, user.Platform, user.UserID, platform.UnifiedResponse{Text: sb.String(), Markdown: true})
 	}
 }
 
 func (s *Scheduler) pushDailyDigest(ctx context.Context, user store.User) {
 	digest, err := s.ai.GenerateDailyDigest(ctx, user.TgUserID)
 	if err != nil {
-		log.Printf("generate digest failed user=%d err=%v", user.TgUserID, err)
 		return
 	}
-	msg := "🗓 *每日邮件摘要*\n\n" + mdToTelegram(digest)
-	if _, sendErr := s.bot.Send(&tele.User{ID: user.TgUserID}, msg, tele.ModeMarkdown); sendErr != nil {
-		plain := "🗓 每日邮件摘要\n\n" + digest
-		if _, err2 := s.bot.Send(&tele.User{ID: user.TgUserID}, plain); err2 != nil {
-			log.Printf("send digest failed user=%d err=%v", user.TgUserID, err2)
-		}
+	if s.send != nil {
+		_ = s.send(ctx, user.Platform, user.UserID, platform.UnifiedResponse{Text: "🗓 *每日邮件摘要*\n\n" + digest, Markdown: true})
 	}
 }
 
-func (s *Scheduler) isInitialized(userID int64) bool {
+func (s *Scheduler) isInitialized(identity string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.initialized[userID]
+	return s.initialized[identity]
 }
 
-func (s *Scheduler) setInitialized(userID int64) {
+func (s *Scheduler) setInitialized(identity string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.initialized[userID] = true
+	s.initialized[identity] = true
+}
+
+func schedulerIdentity(user store.User) string {
+	platformName := strings.TrimSpace(user.Platform)
+	if platformName == "" {
+		platformName = "telegram"
+	}
+	userID := strings.TrimSpace(user.UserID)
+	if userID == "" {
+		userID = fmt.Sprintf("%d", user.TgUserID)
+	}
+	return platformName + ":" + userID
 }

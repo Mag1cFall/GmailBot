@@ -5,3 +5,4 @@ data/
 client_secret_*.json
 gmailbot
 *.log
+/ref

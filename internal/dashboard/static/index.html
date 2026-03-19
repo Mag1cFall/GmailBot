@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GmailBot Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">小 AstrBot</div>
+      <button type="button" data-view="overview" class="nav active">概览</button>
+      <button type="button" data-view="plugins" class="nav">插件</button>
+      <button type="button" data-view="tools" class="nav">工具</button>
+      <button type="button" data-view="sessions" class="nav">会话</button>
+      <button type="button" data-view="config" class="nav">配置</button>
+      <button type="button" data-view="providers" class="nav">模型</button>
+      <button type="button" data-view="logs" class="nav">日志</button>
+      <div class="auth-box">
+        <input id="auth" type="password" placeholder="Dashboard 密码">
+        <button type="button" id="save-auth">保存</button>
+      </div>
+    </aside>
+    <main class="content">
+      <section id="overview" class="view active">
+        <div class="cards">
+          <div class="card"><div class="label">运行时长</div><div id="uptime" class="value">-</div></div>
+          <div class="card"><div class="label">消息数</div><div id="messages" class="value">-</div></div>
+          <div class="card"><div class="label">活跃用户</div><div id="users" class="value">-</div></div>
+          <div class="card"><div class="label">工具调用</div><div id="tool-calls" class="value">-</div></div>
+        </div>
+        <div class="panel">
+          <h2>系统状态</h2>
+          <pre id="status-json"></pre>
+        </div>
+      </section>
+      <section id="plugins" class="view">
+        <div class="panel"><h2>插件</h2><div id="plugin-list" class="list"></div></div>
+      </section>
+      <section id="tools" class="view">
+        <div class="panel"><h2>工具</h2><div id="tool-list" class="list"></div></div>
+      </section>
+      <section id="sessions" class="view">
+        <div class="panel">
+          <h2>会话</h2>
+          <div class="toolbar">
+            <input id="session-uid" placeholder="Telegram 用户 ID">
+            <button type="button" id="load-sessions">加载</button>
+          </div>
+          <pre id="session-list"></pre>
+        </div>
+      </section>
+      <section id="config" class="view">
+        <div class="panel"><h2>配置</h2><div id="config-list" class="list"></div></div>
+      </section>
+      <section id="providers" class="view">
+        <div class="panel"><h2>模型提供方</h2><pre id="provider-list"></pre></div>
+      </section>
+      <section id="logs" class="view">
+        <div class="panel"><h2>日志</h2><pre id="log-list"></pre></div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

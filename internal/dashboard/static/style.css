@@ -1,0 +1,159 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, "Microsoft YaHei", sans-serif;
+  background: #0b1220;
+  color: #e5eefc;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  padding: 24px 18px;
+  background: #121a2b;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.brand {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.nav,
+.toolbar button,
+.auth-box button,
+.toggle,
+.save-config {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #1d2940;
+  color: #e5eefc;
+  cursor: pointer;
+}
+
+.nav.active {
+  background: #315efb;
+}
+
+.auth-box,
+.toolbar {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-box {
+  margin-top: auto;
+  flex-direction: column;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  background: #0f1727;
+  color: #e5eefc;
+  padding: 10px 12px;
+}
+
+.content {
+  padding: 24px;
+}
+
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.card,
+.panel,
+.item {
+  background: #121a2b;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px;
+}
+
+.card {
+  padding: 20px;
+}
+
+.label {
+  color: #91a4c6;
+  font-size: 13px;
+}
+
+.value {
+  margin-top: 8px;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+
+.item h3 {
+  margin: 0 0 6px;
+}
+
+.meta {
+  color: #91a4c6;
+  font-size: 13px;
+}
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0f1727;
+  border-radius: 14px;
+  padding: 14px;
+  color: #d5e3ff;
+}
+
+textarea {
+  min-height: 96px;
+}
+
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

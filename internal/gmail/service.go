@@ -61,8 +61,8 @@ type Label struct {
 func NewService(cfg config.Config, st *store.Store) *Service {
 	return &Service{
 		oauthConfig: &oauth2.Config{
-			ClientID:     cfg.GoogleClientID,
-			ClientSecret: cfg.GoogleClientSecret,
+			ClientID:     strings.TrimSpace(cfg.GoogleClientID),
+			ClientSecret: strings.TrimSpace(cfg.GoogleClientSecret),
 			Endpoint: oauth2.Endpoint{
 				AuthURL:   "https://accounts.google.com/o/oauth2/auth",
 				TokenURL:  "https://oauth2.googleapis.com/token",
@@ -70,8 +70,8 @@ func NewService(cfg config.Config, st *store.Store) *Service {
 			},
 			RedirectURL: cfg.OAuthRedirectURL,
 			Scopes: []string{
-				gmail.GmailReadonlyScope,
-				gmail.GmailLabelsScope,
+				gmail.GmailModifyScope,
+				gmail.GmailSendScope,
 			},
 		},
 		store: st,
@@ -81,7 +81,17 @@ func NewService(cfg config.Config, st *store.Store) *Service {
 	}
 }
 
+func (s *Service) ensureOAuthConfigured() error {
+	if strings.TrimSpace(s.oauthConfig.ClientID) == "" || strings.TrimSpace(s.oauthConfig.ClientSecret) == "" {
+		return errors.New("gmail oauth is not configured, please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
+	}
+	return nil
+}
+
 func (s *Service) AuthCodeURL(state string) string {
+	if err := s.ensureOAuthConfigured(); err != nil {
+		return err.Error()
+	}
 	return s.oauthConfig.AuthCodeURL(
 		state,
 		oauth2.AccessTypeOffline,
@@ -109,6 +119,9 @@ func (s *Service) ParseCode(raw string) (string, error) {
 }
 
 func (s *Service) ExchangeCode(ctx context.Context, code string) (*oauth2.Token, error) {
+	if err := s.ensureOAuthConfigured(); err != nil {
+		return nil, err
+	}
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return nil, errors.New("empty oauth code")
@@ -309,6 +322,9 @@ func (s *Service) gmailClientForUser(ctx context.Context, tgUserID int64) (*gmai
 	if !user.IsAuthorized() {
 		return nil, store.User{}, errors.New("user is not authorized, please run /auth first")
 	}
+	if err := s.ensureOAuthConfigured(); err != nil {
+		return nil, store.User{}, err
+	}
 
 	token := &oauth2.Token{
 		AccessToken:  user.AccessToken,
@@ -435,4 +451,163 @@ func decodePartBody(mimeType string, body *gmail.MessagePartBody) string {
 		content = htmlTagPattern.ReplaceAllString(content, " ")
 	}
 	return strings.TrimSpace(content)
+}
+
+func (s *Service) SendEmail(ctx context.Context, tgUserID int64, to, subject, body string) (string, error) {
+	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return "", err
+	}
+	from := strings.TrimSpace(user.GmailAddress)
+	raw := buildRawEmail(from, to, subject, "", "", body)
+	msg := &gmail.Message{
+		Raw: base64.URLEncoding.EncodeToString([]byte(raw)),
+	}
+	sent, err := gmailSvc.Users.Messages.Send("me", msg).Do()
+	if err != nil {
+		return "", fmt.Errorf("send email failed: %w", err)
+	}
+	return sent.Id, nil
+}
+
+func (s *Service) ReplyEmail(ctx context.Context, tgUserID int64, emailID, body string) (string, error) {
+	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return "", err
+	}
+	original, err := gmailSvc.Users.Messages.Get("me", emailID).Format("metadata").MetadataHeaders("Subject", "From", "To", "Message-ID").Do()
+	if err != nil {
+		return "", fmt.Errorf("get original email failed: %w", err)
+	}
+	headers := toHeaderMap(original.Payload)
+	origFrom := headers["from"]
+	origSubject := headers["subject"]
+	messageID := ""
+	for _, h := range original.Payload.Headers {
+		if strings.EqualFold(h.Name, "Message-ID") {
+			messageID = strings.TrimSpace(h.Value)
+		}
+	}
+
+	replyTo := origFrom
+	subject := origSubject
+	if !strings.HasPrefix(strings.ToLower(subject), "re:") {
+		subject = "Re: " + subject
+	}
+	from := strings.TrimSpace(user.GmailAddress)
+	raw := buildRawEmail(from, replyTo, subject, messageID, "", body)
+
+	msg := &gmail.Message{
+		Raw:      base64.URLEncoding.EncodeToString([]byte(raw)),
+		ThreadId: original.ThreadId,
+	}
+	sent, err := gmailSvc.Users.Messages.Send("me", msg).Do()
+	if err != nil {
+		return "", fmt.Errorf("reply email failed: %w", err)
+	}
+	return sent.Id, nil
+}
+
+func (s *Service) ForwardEmail(ctx context.Context, tgUserID int64, emailID, to string) (string, error) {
+	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return "", err
+	}
+	original, err := gmailSvc.Users.Messages.Get("me", emailID).Format("full").Do()
+	if err != nil {
+		return "", fmt.Errorf("get original email failed: %w", err)
+	}
+	headers := toHeaderMap(original.Payload)
+	origSubject := headers["subject"]
+	origFrom := headers["from"]
+	origDate := headers["date"]
+	origBody := extractMessageBody(original.Payload)
+	if origBody == "" {
+		origBody = strings.TrimSpace(original.Snippet)
+	}
+
+	subject := origSubject
+	if !strings.HasPrefix(strings.ToLower(subject), "fwd:") {
+		subject = "Fwd: " + subject
+	}
+
+	body := fmt.Sprintf("---------- Forwarded message ----------\nFrom: %s\nDate: %s\nSubject: %s\n\n%s",
+		origFrom, origDate, origSubject, origBody)
+
+	from := strings.TrimSpace(user.GmailAddress)
+	raw := buildRawEmail(from, to, subject, "", "", body)
+
+	msg := &gmail.Message{
+		Raw: base64.URLEncoding.EncodeToString([]byte(raw)),
+	}
+	sent, err := gmailSvc.Users.Messages.Send("me", msg).Do()
+	if err != nil {
+		return "", fmt.Errorf("forward email failed: %w", err)
+	}
+	return sent.Id, nil
+}
+
+func (s *Service) CreateLabel(ctx context.Context, tgUserID int64, name string) (*Label, error) {
+	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return nil, err
+	}
+	label, err := gmailSvc.Users.Labels.Create("me", &gmail.Label{
+		Name:                  strings.TrimSpace(name),
+		LabelListVisibility:   "labelShow",
+		MessageListVisibility: "show",
+	}).Do()
+	if err != nil {
+		return nil, fmt.Errorf("create label failed: %w", err)
+	}
+	return &Label{
+		ID:   label.Id,
+		Name: label.Name,
+		Type: label.Type,
+	}, nil
+}
+
+func (s *Service) DeleteLabel(ctx context.Context, tgUserID int64, labelID string) error {
+	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return err
+	}
+	if err := gmailSvc.Users.Labels.Delete("me", strings.TrimSpace(labelID)).Do(); err != nil {
+		return fmt.Errorf("delete label failed: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) ModifyMessageLabels(ctx context.Context, tgUserID int64, emailID string, addLabels, removeLabels []string) error {
+	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
+	if err != nil {
+		return err
+	}
+	req := &gmail.ModifyMessageRequest{
+		AddLabelIds:    addLabels,
+		RemoveLabelIds: removeLabels,
+	}
+	if _, err := gmailSvc.Users.Messages.Modify("me", strings.TrimSpace(emailID), req).Do(); err != nil {
+		return fmt.Errorf("modify labels failed: %w", err)
+	}
+	return nil
+}
+
+func buildRawEmail(from, to, subject, inReplyTo, references, body string) string {
+	var sb strings.Builder
+	sb.WriteString("From: " + from + "\r\n")
+	sb.WriteString("To: " + to + "\r\n")
+	sb.WriteString("Subject: " + subject + "\r\n")
+	sb.WriteString("MIME-Version: 1.0\r\n")
+	sb.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	if inReplyTo != "" {
+		sb.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
+		sb.WriteString("References: " + inReplyTo + "\r\n")
+	}
+	if references != "" {
+		sb.WriteString("References: " + references + "\r\n")
+	}
+	sb.WriteString("\r\n")
+	sb.WriteString(body)
+	return sb.String()
 }
