@@ -51,6 +51,7 @@ func NewScheduler(st *store.Store, gmailService schedulerMailService, agent sche
 		initialized: map[string]bool{},
 	}
 	_, _ = c.AddFunc("0 * * * * *", s.runMinuteTasks)
+	_, _ = c.AddFunc("0 0 3 * * *", s.runCleanup)
 	return s
 }
 
@@ -219,4 +220,18 @@ func schedulerIdentity(user store.User) string {
 		userID = fmt.Sprintf("%d", user.TgUserID)
 	}
 	return platformName + ":" + userID
+}
+
+func (s *Scheduler) runCleanup() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _ = s.store.CleanOldSeenEmails(ctx, 7)
+	s.mu.Lock()
+	today := time.Now().Format("2006-01-02")
+	for key := range s.lastDigest {
+		if !strings.Contains(key, today) {
+			delete(s.lastDigest, key)
+		}
+	}
+	s.mu.Unlock()
 }

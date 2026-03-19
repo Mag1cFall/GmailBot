@@ -87,7 +87,7 @@ func (s *Store) ListFiles(tgUserID int64) ([]string, error) {
 		if err != nil {
 			return nil
 		}
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
+		if !info.IsDir() && (strings.HasSuffix(info.Name(), ".md") || strings.HasSuffix(info.Name(), ".jsonl")) {
 			rel, _ := filepath.Rel(dir, path)
 			files = append(files, rel)
 		}
@@ -97,6 +97,68 @@ func (s *Store) ListFiles(tgUserID int64) ([]string, error) {
 		return nil, err
 	}
 	return files, nil
+}
+
+type FileInfo struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+func (s *Store) ListFilesWithSize(tgUserID int64) ([]FileInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	dir := s.UserDir(tgUserID)
+	var files []FileInfo
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			rel, _ := filepath.Rel(dir, path)
+			files = append(files, FileInfo{Name: rel, Size: info.Size()})
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return files, nil
+}
+
+func (s *Store) DeleteFile(tgUserID int64, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid file name")
+	}
+	path := filepath.Join(s.UserDir(tgUserID), name)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ClearSessionTranscripts(tgUserID int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir := filepath.Join(s.UserDir(tgUserID), "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".jsonl") {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err == nil {
+				count++
+			}
+		}
+	}
+	return count, nil
 }
 
 func (s *Store) Search(tgUserID int64, query string) ([]SearchResult, error) {
@@ -216,6 +278,7 @@ func (p *MemoryPlugin) Init(ctx *plugin.Context) error {
 	p.registerWriteMemory(ctx.Registry)
 	p.registerSearchMemory(ctx.Registry)
 	p.registerListMemory(ctx.Registry)
+	p.registerDeleteMemory(ctx.Registry)
 	return nil
 }
 
@@ -319,6 +382,33 @@ func (p *MemoryPlugin) registerListMemory(r *agent.ToolRegistry) {
 				return "", err
 			}
 			return agent.ToJSON(map[string]any{"files": files})
+		},
+		Active:   true,
+		Category: "memory",
+	})
+}
+
+func (p *MemoryPlugin) registerDeleteMemory(r *agent.ToolRegistry) {
+	r.Register(&agent.ToolDef{
+		Name:        "memory_delete",
+		Description: "删除用户的指定记忆文件",
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"file":{"type":"string","description":"要删除的记忆文件名"}
+			},
+			"required":["file"]
+		}`),
+		Handler: func(tc *agent.ToolContext, raw json.RawMessage) (string, error) {
+			var req struct {
+				File string `json:"file"`
+			}
+			json.Unmarshal(raw, &req)
+			err := p.store.DeleteFile(tc.TgUserID, req.File)
+			if err != nil {
+				return "", err
+			}
+			return agent.ToJSON(map[string]any{"status": "deleted", "file": req.File})
 		},
 		Active:   true,
 		Category: "memory",

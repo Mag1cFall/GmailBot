@@ -28,7 +28,9 @@ func NewManager(st *store.Store, defaultName string) *Manager {
 		SystemPrompt: "你是用户的私人 Gmail 管理助手，擅长查信、读信、写信、整理标签和生成摘要。",
 		Tools: []string{
 			"list_emails", "get_email", "get_labels", "summarize_emails", "send_email", "reply_email", "forward_email", "create_label", "delete_label", "modify_labels",
+			"memory_read", "memory_write", "memory_search", "memory_list", "memory_delete",
 			"web_search", "read_url", "get_current_time", "run_calculation", "set_reminder",
+			"handoff_to_email_writer", "handoff_to_email_searcher",
 		},
 	})
 	mgr.Register(Persona{
@@ -45,7 +47,7 @@ func NewManager(st *store.Store, defaultName string) *Manager {
 	mgr.Register(Persona{
 		Name:         "research",
 		SystemPrompt: "你是搜索与知识助手，优先查找网页和知识库内容并组织答案。",
-		Tools:        []string{"web_search", "read_url", "knowledge_search", "knowledge_list", "memory_search", "memory_read", "get_current_time", "run_calculation"},
+		Tools:        []string{"web_search", "read_url", "knowledge_search", "knowledge_list", "memory_read", "memory_write", "memory_search", "memory_list", "memory_delete", "get_current_time", "run_calculation"},
 	})
 	if mgr.defaultName == "" {
 		mgr.defaultName = "gmail"

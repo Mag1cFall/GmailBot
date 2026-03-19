@@ -422,6 +422,18 @@ func (s *Store) IsEmailSeen(ctx context.Context, tgUserID int64, emailID string)
 	return true, nil
 }
 
+func (s *Store) CleanOldSeenEmails(ctx context.Context, daysOld int) (int64, error) {
+	if daysOld <= 0 {
+		daysOld = 7
+	}
+	cutoff := time.Now().AddDate(0, 0, -daysOld).UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM seen_emails WHERE notified_at < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *Store) CreateSession(ctx context.Context, tgUserID int64, title string) (Session, error) {
 	return s.CreateSessionByIdentity(ctx, "telegram", strconv.FormatInt(tgUserID, 10), title)
 }

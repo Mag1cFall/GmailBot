@@ -39,8 +39,8 @@ func TestStoreWriteReadSearchAndPersistToDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list files failed: %v", err)
 	}
-	if len(files) != 1 || files[0] != "preferences.md" {
-		t.Fatalf("unexpected memory files: %#v", files)
+	if len(files) != 2 {
+		t.Fatalf("expected 2 memory files, got: %#v", files)
 	}
 
 	if _, err := os.Stat(filepath.Join(root, "99", "preferences.md")); err != nil {

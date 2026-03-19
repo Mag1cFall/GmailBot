@@ -21,6 +21,7 @@ func (a *App) registerHandlers() error {
 		{Name: "auth", Description: "获取 Google 授权链接", Handler: a.handleAuth},
 		{Name: "code", Description: "提交 /code <redirect_url> 完成授权", Handler: a.handleCode},
 		{Name: "revoke", Description: "撤销 Gmail 授权", Handler: a.handleRevoke},
+		{Name: "mymail", Description: "查看已绑定的邮箱", Handler: a.handleMyMail},
 		{Name: "inbox", Description: "查看收件箱 /inbox [n]", Handler: a.handleInbox},
 		{Name: "unread", Description: "查看未读邮件", Handler: a.handleUnread},
 		{Name: "read", Description: "查看邮件正文 /read <id>", Handler: a.handleRead},
@@ -40,6 +41,8 @@ func (a *App) registerHandlers() error {
 		{Name: "clear", Description: "清空当前会话", Handler: a.handleClearSession},
 		{Name: "persona", Description: "查看或切换人格 /persona [name|list]", Handler: a.handlePersona},
 		{Name: "config", Description: "热修改配置项（AI模型/API/超时）", Handler: a.handleConfig},
+		{Name: "memory", Description: "查看记忆文件列表和大小", Handler: a.handleMemory},
+		{Name: "memoryclean", Description: "清理会话记录 /memoryclean [文件名]", Handler: a.handleMemoryClean},
 	}
 	for _, command := range commands {
 		if err := a.router.Register(command); err != nil {
@@ -57,10 +60,43 @@ func (a *App) handleStart(ctx context.Context, msg platform.UnifiedMessage, args
 }
 
 func (a *App) handleHelp(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
-	return platform.UnifiedResponse{
-		Text:     "📬 *邮件操作*\n/inbox \\[n] — 查看收件箱（默认10封）\n/unread — 查看未读邮件\n/read <id> — 查看邮件正文\n/search <query> — 搜索邮件\n/labels — 查看标签列表\n\n🗓 *定时任务*\n/digest — 立即生成每日摘要\n/setdigest 08:00,12:00 — 设置定时摘要\n/canceldigest — 取消定时摘要\n/setcheck <分钟> — 设置新邮件检查间隔\n/cancelcheck — 停止自动检查\n/aipush on|off — AI智能推送开关\n/schedule — 查看定时任务配置\n\n🤖 *AI 会话*\n/new \\[标题] — 新建会话\n/sessions — 会话列表\n/switch <id> — 切换会话\n/clear — 清空当前会话\n直接发送文本即可与 AI 对话\n\n⚙️ *系统*\n/config — 热修改配置\n/status — 查看 Bot 运行状态\n/auth — Gmail 授权\n/revoke — 撤销授权",
-		Markdown: true,
-	}, nil
+	helpText := "📬 *邮件操作*\n" +
+		"/inbox \\[n] — 查看收件箱（默认10封）\n" +
+		"/unread — 查看未读邮件\n" +
+		"/read <id> — 查看邮件正文\n" +
+		"/search <query> — 搜索邮件\n" +
+		"/labels — 查看标签列表\n" +
+		"/digest — 立即生成每日摘要\n" +
+		"\n🗓 *定时任务*\n" +
+		"/setdigest 08:00,12:00 — 设置定时摘要\n" +
+		"/canceldigest — 取消定时摘要\n" +
+		"/setcheck <分钟> — 设置新邮件检查间隔\n" +
+		"/cancelcheck — 停止自动检查\n" +
+		"/aipush on|off — AI智能推送开关\n" +
+		"/schedule — 查看定时任务配置\n" +
+		"\n🤖 *AI 对话*\n" +
+		"直接发送文本即可与 AI 对话\n" +
+		"AI 可自动调用工具：查信/发信/回信/转发/标签管理/网页搜索/读网页/数学计算/设提醒/记忆读写\n" +
+		"/new \\[标题] — 新建会话\n" +
+		"/sessions — 会话列表\n" +
+		"/switch <id> — 切换会话\n" +
+		"/clear — 清空当前会话\n" +
+		"\n🎭 *人格切换*\n" +
+		"/persona — 查看当前人格\n" +
+		"/persona list — 列出所有人格\n" +
+		"/persona <name> — 切换人格\n" +
+		"可选：gmail / gmail-only / research / all-tools\n" +
+		"\n🧠 *记忆管理*\n" +
+		"/memory — 查看记忆文件列表和大小\n" +
+		"/memoryclean — 清理会话记录文件\n" +
+		"/memoryclean <文件名> — 删除指定记忆文件\n" +
+		"\n⚙️ *系统*\n" +
+		"/config — 热修改配置（AI模型/API/超时）\n" +
+		"/status — 查看 Bot 运行状态\n" +
+		"/auth — Gmail 授权\n" +
+		"/mymail — 查看已绑定邮箱\n" +
+		"/revoke — 撤销授权"
+	return platform.UnifiedResponse{Text: helpText, Markdown: true}, nil
 }
 
 func (a *App) handleAuth(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
@@ -470,4 +506,76 @@ func (a *App) appendToSession(msg platform.UnifiedMessage, userMsg, assistantMsg
 		_, _ = a.store.AppendActiveSessionMessageByIdentity(ctx, msg.Platform, msg.UserID, "user", userMsg)
 		_, _ = a.store.AppendActiveSessionMessageByIdentity(ctx, msg.Platform, msg.UserID, "assistant", assistantMsg)
 	}()
+}
+
+func (a *App) handleMyMail(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
+	userKey, err := a.resolveUserKey(ctx, msg)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "查询失败：用户不存在"}, nil
+	}
+	user, err := a.store.GetUser(ctx, userKey)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "查询失败：" + err.Error()}, nil
+	}
+	if !user.IsAuthorized() {
+		return platform.UnifiedResponse{Text: "尚未绑定邮箱，请先执行 /auth 授权。"}, nil
+	}
+	return platform.UnifiedResponse{Text: "已绑定邮箱：" + user.GmailAddress}, nil
+}
+
+func (a *App) handleMemory(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
+	userKey, err := a.resolveUserKey(ctx, msg)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "查询失败：用户不存在"}, nil
+	}
+	files, err := a.memory.ListFilesWithSize(userKey)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "查询失败：" + err.Error()}, nil
+	}
+	if len(files) == 0 {
+		return platform.UnifiedResponse{Text: "暂无记忆文件。"}, nil
+	}
+	var total int64
+	lines := []string{"🧠 *记忆文件列表*"}
+	for _, f := range files {
+		size := formatSize(f.Size)
+		lines = append(lines, fmt.Sprintf("- `%s` (%s)", f.Name, size))
+		total += f.Size
+	}
+	lines = append(lines, fmt.Sprintf("\n总计 %d 个文件，%s", len(files), formatSize(total)))
+	lines = append(lines, "\n删除指定文件：/memoryclean <文件名>")
+	lines = append(lines, "清理全部会话记录：/memoryclean")
+	return platform.UnifiedResponse{Text: strings.Join(lines, "\n"), Markdown: true}, nil
+}
+
+func (a *App) handleMemoryClean(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
+	userKey, err := a.resolveUserKey(ctx, msg)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "操作失败：用户不存在"}, nil
+	}
+	if len(args) > 0 {
+		fileName := strings.TrimSpace(strings.Join(args, " "))
+		if err := a.memory.DeleteFile(userKey, fileName); err != nil {
+			return platform.UnifiedResponse{Text: "删除失败：" + err.Error()}, nil
+		}
+		return platform.UnifiedResponse{Text: "已删除记忆文件：" + fileName}, nil
+	}
+	count, err := a.memory.ClearSessionTranscripts(userKey)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "清理失败：" + err.Error()}, nil
+	}
+	if count == 0 {
+		return platform.UnifiedResponse{Text: "没有需要清理的会话记录文件。"}, nil
+	}
+	return platform.UnifiedResponse{Text: fmt.Sprintf("已清理 %d 个会话记录文件。", count)}, nil
+}
+
+func formatSize(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
 }

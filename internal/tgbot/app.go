@@ -121,12 +121,6 @@ func (a *App) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) (p
 	if evt.Aborted {
 		return platform.UnifiedResponse{Text: evt.AbortMsg}, nil
 	}
-	if a.memory != nil {
-		if userKey, err := a.resolveUserKey(context.Background(), msg); err == nil {
-			go a.memory.SaveSessionTranscript(userKey, "active", "user", msg.Text)
-			go a.memory.SaveSessionTranscript(userKey, "active", "assistant", evt.Response.Text)
-		}
-	}
 	return evt.Response, nil
 }
 
