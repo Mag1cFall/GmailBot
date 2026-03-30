@@ -1,3 +1,4 @@
+// SQLite 数据库初始化和迁移
 package store
 
 import (
@@ -9,10 +10,12 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Store SQLite 数据存储
 type Store struct {
 	db *sql.DB
 }
 
+// Init 初始化数据库并执行迁移
 func Init(dbPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
@@ -30,10 +33,12 @@ func Init(dbPath string) (*Store, error) {
 	return s, nil
 }
 
+// Close 关闭数据库连接
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// migrate 执行建表和字段迭代升级
 func (s *Store) migrate(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 	CREATE TABLE IF NOT EXISTS users (

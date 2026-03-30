@@ -1,3 +1,4 @@
+// 命令路由
 package platform
 
 import (
@@ -8,24 +9,28 @@ import (
 	"sync"
 )
 
+// Command 可注册命令
 type Command struct {
 	Name        string
 	Description string
 	Handler     func(ctx context.Context, msg UnifiedMessage, args []string) (UnifiedResponse, error)
 }
 
+// CommandRouter 命令路由器
 type CommandRouter struct {
 	mu       sync.RWMutex
 	commands map[string]Command
 	order    []string
 }
 
+// NewCommandRouter 创建命令路由器
 func NewCommandRouter() *CommandRouter {
 	return &CommandRouter{
 		commands: map[string]Command{},
 	}
 }
 
+// Register 注册命令，命令名不能为空且 Handler 不能为 nil
 func (r *CommandRouter) Register(cmd Command) error {
 	name := normalizeCommandName(cmd.Name)
 	if name == "" {
@@ -46,6 +51,7 @@ func (r *CommandRouter) Register(cmd Command) error {
 	return nil
 }
 
+// Commands 返回所有已注册命令，按字母顺序
 func (r *CommandRouter) Commands() []Command {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -58,6 +64,7 @@ func (r *CommandRouter) Commands() []Command {
 	return out
 }
 
+// Handle 匹配并执行命令
 func (r *CommandRouter) Handle(ctx context.Context, msg UnifiedMessage) (UnifiedResponse, bool, error) {
 	name, args, ok := parseCommand(msg.Text)
 	if !ok {
@@ -75,6 +82,7 @@ func (r *CommandRouter) Handle(ctx context.Context, msg UnifiedMessage) (Unified
 	return resp, true, err
 }
 
+// parseCommand 解析 /cmd args 格式的命令文本
 func parseCommand(text string) (string, []string, bool) {
 	text = strings.TrimSpace(text)
 	if text == "" || !strings.HasPrefix(text, "/") {
@@ -91,6 +99,7 @@ func parseCommand(text string) (string, []string, bool) {
 	return name, parts[1:], true
 }
 
+// normalizeCommandName 解析并小写化命令名，去除 / 前缀和 @bot 后缀
 func normalizeCommandName(name string) string {
 	name = strings.TrimSpace(name)
 	name = strings.TrimPrefix(name, "/")

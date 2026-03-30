@@ -1,3 +1,4 @@
+// 网页搜索与正文抓取插件
 package websearch
 
 import (
@@ -16,16 +17,19 @@ import (
 	"golang.org/x/net/html"
 )
 
+// Plugin 网页搜索插件
 type Plugin struct {
 	client *http.Client
 }
 
+// SearchResult 搜索结果
 type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 }
 
+// NewPlugin 创建网页搜索插件
 func NewPlugin() *Plugin {
 	return &Plugin{client: &http.Client{Timeout: 15 * time.Second}}
 }
@@ -36,12 +40,14 @@ func (p *Plugin) Shutdown() error                  { return nil }
 func (p *Plugin) Commands() []plugin.Command       { return nil }
 func (p *Plugin) EventHandlers() []plugin.EventSub { return nil }
 
+// Init 注册 web_search 和 read_url 工具
 func (p *Plugin) Init(ctx *plugin.Context) error {
 	p.registerWebSearch(ctx.Registry)
 	p.registerReadURL(ctx.Registry)
 	return nil
 }
 
+// registerWebSearch 注册 web_search 工具
 func (p *Plugin) registerWebSearch(registry *agent.ToolRegistry) {
 	registry.Register(&agent.ToolDef{
 		Name:        "web_search",
@@ -66,6 +72,7 @@ func (p *Plugin) registerWebSearch(registry *agent.ToolRegistry) {
 	})
 }
 
+// registerReadURL 注册 read_url 工具
 func (p *Plugin) registerReadURL(registry *agent.ToolRegistry) {
 	registry.Register(&agent.ToolDef{
 		Name:        "read_url",
@@ -89,6 +96,7 @@ func (p *Plugin) registerReadURL(registry *agent.ToolRegistry) {
 	})
 }
 
+// Search 通过 DuckDuckGo 搜索
 func (p *Plugin) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -114,6 +122,7 @@ func (p *Plugin) Search(ctx context.Context, query string, limit int) ([]SearchR
 	return parseDuckDuckGoResults(resp.Body, limit)
 }
 
+// ReadURL 抓取网页正文
 func (p *Plugin) ReadURL(ctx context.Context, rawURL string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -138,6 +147,7 @@ func (p *Plugin) ReadURL(ctx context.Context, rawURL string) (string, error) {
 	return extractText(resp.Body)
 }
 
+// parseDuckDuckGoResults 解析 DuckDuckGo HTML 搜索结果
 func parseDuckDuckGoResults(reader io.Reader, limit int) ([]SearchResult, error) {
 	node, err := html.Parse(reader)
 	if err != nil {
@@ -168,6 +178,7 @@ func parseDuckDuckGoResults(reader io.Reader, limit int) ([]SearchResult, error)
 	return results, nil
 }
 
+// extractText 提取 HTML 页面的纯文本内容
 func extractText(reader io.Reader) (string, error) {
 	node, err := html.Parse(reader)
 	if err != nil {
@@ -201,6 +212,7 @@ func extractText(reader io.Reader) (string, error) {
 	return content, nil
 }
 
+// hasClass 判断节点是否含有指定 CSS 类
 func hasClass(node *html.Node, className string) bool {
 	for _, attr := range node.Attr {
 		if attr.Key == "class" {
@@ -214,6 +226,7 @@ func hasClass(node *html.Node, className string) bool {
 	return false
 }
 
+// getAttr 获取 HTML 节点的属性値
 func getAttr(node *html.Node, key string) string {
 	for _, attr := range node.Attr {
 		if attr.Key == key {
@@ -223,6 +236,7 @@ func getAttr(node *html.Node, key string) string {
 	return ""
 }
 
+// findFirstByClass 在子树中查找第一个含指定类的节点
 func findFirstByClass(node *html.Node, className string) *html.Node {
 	if node == nil {
 		return nil
@@ -238,6 +252,7 @@ func findFirstByClass(node *html.Node, className string) *html.Node {
 	return nil
 }
 
+// nodeText 提取节点和其子代的文本
 func nodeText(node *html.Node) string {
 	if node == nil {
 		return ""

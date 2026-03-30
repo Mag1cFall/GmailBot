@@ -1,3 +1,4 @@
+// Telegram Bot 命令处理函数
 package tgbot
 
 import (
@@ -14,6 +15,7 @@ import (
 
 var digestTimePattern = regexp.MustCompile(`^([01]\d|2[0-3]):([0-5]\d)$`)
 
+// registerHandlers 注册所有命令处理函数
 func (a *App) registerHandlers() error {
 	commands := []platform.Command{
 		{Name: "start", Description: "初始化机器人", Handler: a.handleStart},
@@ -52,6 +54,7 @@ func (a *App) registerHandlers() error {
 	return nil
 }
 
+// handleStart 初始化用户并展示欢迎指引
 func (a *App) handleStart(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if _, err := a.resolveUserKey(ctx, msg); err != nil {
 		return platform.UnifiedResponse{Text: "初始化用户失败，请稍后重试。"}, nil
@@ -59,6 +62,7 @@ func (a *App) handleStart(ctx context.Context, msg platform.UnifiedMessage, args
 	return platform.UnifiedResponse{Text: "欢迎使用 Gmail 助手机器人。\n1) 先执行 /auth 完成 Gmail 授权\n2) 授权后可用 /inbox /unread /search /digest\n3) 直接发送文本可与 AI 助手对话"}, nil
 }
 
+// handleHelp 返回帮助文本
 func (a *App) handleHelp(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	helpText := "📬 *邮件操作*\n" +
 		"/inbox \\[n] — 查看收件箱（默认10封）\n" +
@@ -99,6 +103,7 @@ func (a *App) handleHelp(ctx context.Context, msg platform.UnifiedMessage, args 
 	return platform.UnifiedResponse{Text: helpText, Markdown: true}, nil
 }
 
+// handleAuth 生成 OAuth 授权链接
 func (a *App) handleAuth(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -112,6 +117,7 @@ func (a *App) handleAuth(ctx context.Context, msg platform.UnifiedMessage, args 
 	return platform.UnifiedResponse{Text: "请按以下步骤授权：\n1. 打开链接并同意授权：\n" + url + "\n\n2. 浏览器会跳转到 localhost 并报错，这是正常的\n3. 复制地址栏完整 URL，发送：\n/code <完整URL>"}, nil
 }
 
+// handleCode 提交授权码，完成 OAuth 流程
 func (a *App) handleCode(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/code <完整重定向URL>"}, nil
@@ -139,6 +145,7 @@ func (a *App) handleCode(ctx context.Context, msg platform.UnifiedMessage, args 
 	return platform.UnifiedResponse{Text: "授权成功，已绑定邮箱：" + email}, nil
 }
 
+// handleRevoke 撤销 Gmail 授权
 func (a *App) handleRevoke(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -150,6 +157,7 @@ func (a *App) handleRevoke(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: "授权已撤销。"}, nil
 }
 
+// handleInbox 查看收件箱
 func (a *App) handleInbox(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	n := parseBoundedInt(args, 10, 1, 20)
 	userKey, err := a.resolveUserKey(ctx, msg)
@@ -168,6 +176,7 @@ func (a *App) handleInbox(ctx context.Context, msg platform.UnifiedMessage, args
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleUnread 查看未读邮件
 func (a *App) handleUnread(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -185,6 +194,7 @@ func (a *App) handleUnread(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleRead 读取指定邮件正文
 func (a *App) handleRead(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/read <id>"}, nil
@@ -202,6 +212,7 @@ func (a *App) handleRead(ctx context.Context, msg platform.UnifiedMessage, args 
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleSearch 搜索邮件
 func (a *App) handleSearch(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	query := strings.TrimSpace(strings.Join(args, " "))
 	if query == "" {
@@ -223,6 +234,7 @@ func (a *App) handleSearch(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleLabels 列出 Gmail 标签
 func (a *App) handleLabels(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -244,6 +256,7 @@ func (a *App) handleLabels(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleDigest 立即生成每日邮件摘要
 func (a *App) handleDigest(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -258,6 +271,7 @@ func (a *App) handleDigest(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: text, Markdown: true}, nil
 }
 
+// handleSetDigest 设置每日摘要定时时间
 func (a *App) handleSetDigest(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/setdigest 08:00 或 /setdigest 08:00,12:00,16:00,20:00"}, nil
@@ -281,6 +295,7 @@ func (a *App) handleSetDigest(ctx context.Context, msg platform.UnifiedMessage, 
 	return platform.UnifiedResponse{Text: "摘要时间已设置为：" + strings.Join(valid, ", ")}, nil
 }
 
+// handleSetCheck 设置新邮件检查间隔
 func (a *App) handleSetCheck(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/setcheck <minutes>"}, nil
@@ -299,6 +314,7 @@ func (a *App) handleSetCheck(ctx context.Context, msg platform.UnifiedMessage, a
 	return platform.UnifiedResponse{Text: fmt.Sprintf("新邮件检查间隔已设置为 %d 分钟。", minutes)}, nil
 }
 
+// handleCancelDigest 取消每日摘要
 func (a *App) handleCancelDigest(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -310,6 +326,7 @@ func (a *App) handleCancelDigest(ctx context.Context, msg platform.UnifiedMessag
 	return platform.UnifiedResponse{Text: "每日自动摘要已取消。"}, nil
 }
 
+// handleAIPush 开启或关闭 AI 智能邮件过滤推送
 func (a *App) handleAIPush(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/aipush on 或 /aipush off"}, nil
@@ -334,6 +351,7 @@ func (a *App) handleAIPush(ctx context.Context, msg platform.UnifiedMessage, arg
 	}
 }
 
+// handleCancelCheck 停止新邮件自动检查
 func (a *App) handleCancelCheck(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -345,6 +363,7 @@ func (a *App) handleCancelCheck(ctx context.Context, msg platform.UnifiedMessage
 	return platform.UnifiedResponse{Text: "新邮件自动检查已停止。"}, nil
 }
 
+// handleSchedule 展示当前定时任务配置
 func (a *App) handleSchedule(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -373,6 +392,7 @@ func (a *App) handleSchedule(ctx context.Context, msg platform.UnifiedMessage, a
 	return platform.UnifiedResponse{Text: fmt.Sprintf("当前配置：\n- 授权状态: %s\n- 新邮件检查: %s\n- AI智能推送: %s\n- 每日摘要时间: %s", auth, checkStr, aiPushStr, digestStr)}, nil
 }
 
+// handleStatus 展示 Bot 和用户运行状态
 func (a *App) handleStatus(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -401,6 +421,7 @@ func (a *App) handleStatus(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: "*Bot 状态*\nGmail: " + authStr + "\n新邮件检查: " + checkStr + "\nAI智能推送: " + aiStr + "\n每日摘要: " + digestStr, Markdown: true}, nil
 }
 
+// handleNewSession 新建并切换到新 AI 会话
 func (a *App) handleNewSession(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	title := strings.TrimSpace(strings.Join(args, " "))
 	session, err := a.store.CreateSessionByIdentity(ctx, msg.Platform, msg.UserID, title)
@@ -410,6 +431,7 @@ func (a *App) handleNewSession(ctx context.Context, msg platform.UnifiedMessage,
 	return platform.UnifiedResponse{Text: fmt.Sprintf("已创建并切换到新会话：%s (%s)", session.Title, session.ID[:8])}, nil
 }
 
+// handleSessions 列出用户会话列表
 func (a *App) handleSessions(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -438,6 +460,7 @@ func (a *App) handleSessions(ctx context.Context, msg platform.UnifiedMessage, a
 	return platform.UnifiedResponse{Text: strings.Join(lines, "\n"), Markdown: true}, nil
 }
 
+// handleSwitchSession 切换活跃会话
 func (a *App) handleSwitchSession(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if len(args) == 0 {
 		return platform.UnifiedResponse{Text: "用法：/switch <id前缀>"}, nil
@@ -459,6 +482,7 @@ func (a *App) handleSwitchSession(ctx context.Context, msg platform.UnifiedMessa
 	return platform.UnifiedResponse{Text: "已切换会话：" + sessionID[:8]}, nil
 }
 
+// handleClearSession 清空当前会话的消息历史
 func (a *App) handleClearSession(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -470,6 +494,7 @@ func (a *App) handleClearSession(ctx context.Context, msg platform.UnifiedMessag
 	return platform.UnifiedResponse{Text: "当前会话上下文已清空。"}, nil
 }
 
+// handlePersona 查看或切换人设
 func (a *App) handlePersona(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	if a.personaMgr == nil {
 		return platform.UnifiedResponse{Text: "人格系统未启用。"}, nil
@@ -495,10 +520,12 @@ func (a *App) handlePersona(ctx context.Context, msg platform.UnifiedMessage, ar
 	return platform.UnifiedResponse{Text: "已切换人格：" + selected.Name}, nil
 }
 
+// handleConfig 返回配置入口提示，具体配置由内联键盘处理
 func (a *App) handleConfig(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	return platform.UnifiedResponse{Text: "⚙️ 点击要修改的配置项："}, nil
 }
 
+// appendToSession 异步将命令和结果记入当前会话
 func (a *App) appendToSession(msg platform.UnifiedMessage, userMsg, assistantMsg string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -508,6 +535,7 @@ func (a *App) appendToSession(msg platform.UnifiedMessage, userMsg, assistantMsg
 	}()
 }
 
+// handleMyMail 查看已绑定的 Gmail 地址
 func (a *App) handleMyMail(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -523,6 +551,7 @@ func (a *App) handleMyMail(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: "已绑定邮箱：" + user.GmailAddress}, nil
 }
 
+// handleMemory 列出用户记忆文件列表和大小
 func (a *App) handleMemory(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -548,6 +577,7 @@ func (a *App) handleMemory(ctx context.Context, msg platform.UnifiedMessage, arg
 	return platform.UnifiedResponse{Text: strings.Join(lines, "\n"), Markdown: true}, nil
 }
 
+// handleMemoryClean 清理会话记录或删除指定记忆文件
 func (a *App) handleMemoryClean(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
 	userKey, err := a.resolveUserKey(ctx, msg)
 	if err != nil {
@@ -570,6 +600,7 @@ func (a *App) handleMemoryClean(ctx context.Context, msg platform.UnifiedMessage
 	return platform.UnifiedResponse{Text: fmt.Sprintf("已清理 %d 个会话记录文件。", count)}, nil
 }
 
+// formatSize 将字节数转换为可读大小字符串
 func formatSize(bytes int64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%d B", bytes)

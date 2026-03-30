@@ -1,3 +1,4 @@
+// MCP server 配置解析
 package mcp
 
 import (
@@ -6,6 +7,7 @@ import (
 	"strings"
 )
 
+// ServerConfig MCP server 配置
 type ServerConfig struct {
 	Name      string            `json:"name"`
 	Command   string            `json:"command"`
@@ -19,10 +21,12 @@ type ServerConfig struct {
 	Active    *bool             `json:"active"`
 }
 
+// Enabled 返回该 server 是否启用
 func (c ServerConfig) Enabled() bool {
 	return c.Active == nil || *c.Active
 }
 
+// EffectiveTransport 推断实际传输类型，优先 Transport 字段，其次 Type，最后按 url 存否判断
 func (c ServerConfig) EffectiveTransport() string {
 	transport := strings.TrimSpace(strings.ToLower(c.Transport))
 	if transport == "" {
@@ -37,6 +41,7 @@ func (c ServerConfig) EffectiveTransport() string {
 	return "stdio"
 }
 
+// EffectiveTimeout 返回超时秒数，默认 15 秒
 func (c ServerConfig) EffectiveTimeout() int {
 	if c.Timeout <= 0 {
 		return 15
@@ -44,6 +49,7 @@ func (c ServerConfig) EffectiveTimeout() int {
 	return c.Timeout
 }
 
+// ParseServers 解析 MCP_SERVERS JSON 配置
 func ParseServers(raw string) ([]ServerConfig, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -70,6 +76,7 @@ func ParseServers(raw string) ([]ServerConfig, error) {
 	return nil, fmt.Errorf("invalid MCP_SERVERS JSON")
 }
 
+// normalizeServers 校验并补全缺省名称
 func normalizeServers(servers []ServerConfig) ([]ServerConfig, error) {
 	result := make([]ServerConfig, 0, len(servers))
 	for i, server := range servers {

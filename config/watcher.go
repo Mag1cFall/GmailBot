@@ -1,3 +1,4 @@
+// 配置文件热重载监听
 package config
 
 import (
@@ -8,8 +9,10 @@ import (
 	"time"
 )
 
+// ReloadCallback 配置重载回调
 type ReloadCallback func(Config)
 
+// Watcher 监听 .env 文件变化并触发重载
 type Watcher struct {
 	mu        sync.Mutex
 	callbacks []ReloadCallback
@@ -21,6 +24,7 @@ type Watcher struct {
 	pollEvery time.Duration
 }
 
+// NewWatcher 创建配置监听器
 func NewWatcher(debounceMS int) *Watcher {
 	if debounceMS <= 0 {
 		debounceMS = 800
@@ -34,12 +38,14 @@ func NewWatcher(debounceMS int) *Watcher {
 	}
 }
 
+// OnReload 注册重载回调
 func (w *Watcher) OnReload(cb ReloadCallback) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.callbacks = append(w.callbacks, cb)
 }
 
+// Start 启动文件轮询
 func (w *Watcher) Start() {
 	info, err := os.Stat(w.envPath)
 	if err == nil {
@@ -50,12 +56,14 @@ func (w *Watcher) Start() {
 	slog.Info("config watcher started", "path", w.envPath)
 }
 
+// Stop 停止监听
 func (w *Watcher) Stop() {
 	w.stopOnce.Do(func() {
 		close(w.stopChan)
 	})
 }
 
+// pollLoop 定时轮询 .env 修改时间，有变化则防抖后触发重载
 func (w *Watcher) pollLoop() {
 	interval := w.pollEvery
 	if interval <= 0 {
@@ -82,6 +90,7 @@ func (w *Watcher) pollLoop() {
 	}
 }
 
+// fireReload 重新加载配置并依次调用所有注册的回调
 func (w *Watcher) fireReload() {
 	cfg := loadFromPath(w.envPath)
 	w.mu.Lock()

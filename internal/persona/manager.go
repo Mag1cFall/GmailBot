@@ -1,3 +1,4 @@
+// 人设管理，支持多人设切换
 package persona
 
 import (
@@ -10,6 +11,7 @@ import (
 	"gmailbot/internal/store"
 )
 
+// Manager 人设管理器
 type Manager struct {
 	mu          sync.RWMutex
 	store       *store.Store
@@ -17,6 +19,7 @@ type Manager struct {
 	defaultName string
 }
 
+// NewManager 创建人设管理器，并注册内置人设
 func NewManager(st *store.Store, defaultName string) *Manager {
 	mgr := &Manager{
 		store:       st,
@@ -55,6 +58,7 @@ func NewManager(st *store.Store, defaultName string) *Manager {
 	return mgr
 }
 
+// Register 注册人设，name 为空则忽略
 func (m *Manager) Register(persona Persona) {
 	if strings.TrimSpace(persona.Name) == "" {
 		return
@@ -65,6 +69,7 @@ func (m *Manager) Register(persona Persona) {
 	m.mu.Unlock()
 }
 
+// List 返回所有已注册人设，按名称升序
 func (m *Manager) List() []Persona {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -76,6 +81,7 @@ func (m *Manager) List() []Persona {
 	return personas
 }
 
+// Get 按名称查找人设
 func (m *Manager) Get(name string) (Persona, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -83,6 +89,7 @@ func (m *Manager) Get(name string) (Persona, bool) {
 	return persona, ok
 }
 
+// Default 返回默认人设
 func (m *Manager) Default() Persona {
 	if persona, ok := m.Get(m.defaultName); ok {
 		return persona
@@ -93,6 +100,7 @@ func (m *Manager) Default() Persona {
 	return Persona{Name: "default", SystemPrompt: "你是一个乐于助人的 AI 助手。"}
 }
 
+// ActivePersona 获取用户当前会话的人设
 func (m *Manager) ActivePersona(ctx context.Context, platformName, userID string) (Persona, error) {
 	session, err := m.store.GetOrCreateActiveSessionByIdentity(ctx, platformName, userID)
 	if err != nil {
@@ -107,6 +115,7 @@ func (m *Manager) ActivePersona(ctx context.Context, platformName, userID string
 	return m.Default(), nil
 }
 
+// SetActiveSessionPersona 切换用户当前会话的人设
 func (m *Manager) SetActiveSessionPersona(ctx context.Context, platformName, userID, personaName string) (Persona, error) {
 	persona, ok := m.Get(personaName)
 	if !ok {

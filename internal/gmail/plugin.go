@@ -1,3 +1,4 @@
+// Gmail 工具插件，注册邮件操作到 Agent
 package gmail
 
 import (
@@ -8,10 +9,12 @@ import (
 	"gmailbot/internal/plugin"
 )
 
+// GmailPlugin Gmail 能力插件
 type GmailPlugin struct {
 	service *Service
 }
 
+// NewPlugin 创建 Gmail 插件
 func NewPlugin(service *Service) *GmailPlugin {
 	return &GmailPlugin{service: service}
 }
@@ -22,6 +25,7 @@ func (p *GmailPlugin) Shutdown() error                  { return nil }
 func (p *GmailPlugin) Commands() []plugin.Command       { return nil }
 func (p *GmailPlugin) EventHandlers() []plugin.EventSub { return nil }
 
+// Init 注册所有 Gmail 工具
 func (p *GmailPlugin) Init(ctx *plugin.Context) error {
 	p.registerListEmails(ctx.Registry)
 	p.registerGetEmail(ctx.Registry)
@@ -36,6 +40,7 @@ func (p *GmailPlugin) Init(ctx *plugin.Context) error {
 	return nil
 }
 
+// registerListEmails 注册 list_emails 工具
 func (p *GmailPlugin) registerListEmails(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "list_emails",
@@ -65,6 +70,7 @@ func (p *GmailPlugin) registerListEmails(r *agent.ToolRegistry) {
 	})
 }
 
+// registerGetEmail 注册 get_email 工具
 func (p *GmailPlugin) registerGetEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "get_email",
@@ -92,6 +98,7 @@ func (p *GmailPlugin) registerGetEmail(r *agent.ToolRegistry) {
 	})
 }
 
+// registerGetLabels 注册 get_labels 工具
 func (p *GmailPlugin) registerGetLabels(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "get_labels",
@@ -112,6 +119,7 @@ func (p *GmailPlugin) registerGetLabels(r *agent.ToolRegistry) {
 	})
 }
 
+// registerSummarizeEmails 注册 summarize_emails 工具
 func (p *GmailPlugin) registerSummarizeEmails(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "summarize_emails",
@@ -149,6 +157,7 @@ func (p *GmailPlugin) registerSummarizeEmails(r *agent.ToolRegistry) {
 	})
 }
 
+// registerSendEmail 注册 send_email 工具
 func (p *GmailPlugin) registerSendEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "send_email",
@@ -180,6 +189,7 @@ func (p *GmailPlugin) registerSendEmail(r *agent.ToolRegistry) {
 	})
 }
 
+// registerReplyEmail 注册 reply_email 工具
 func (p *GmailPlugin) registerReplyEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "reply_email",
@@ -209,6 +219,7 @@ func (p *GmailPlugin) registerReplyEmail(r *agent.ToolRegistry) {
 	})
 }
 
+// registerForwardEmail 注册 forward_email 工具
 func (p *GmailPlugin) registerForwardEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "forward_email",
@@ -238,6 +249,7 @@ func (p *GmailPlugin) registerForwardEmail(r *agent.ToolRegistry) {
 	})
 }
 
+// registerCreateLabel 注册 create_label 工具
 func (p *GmailPlugin) registerCreateLabel(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "create_label",
@@ -265,6 +277,7 @@ func (p *GmailPlugin) registerCreateLabel(r *agent.ToolRegistry) {
 	})
 }
 
+// registerDeleteLabel 注册 delete_label 工具
 func (p *GmailPlugin) registerDeleteLabel(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "delete_label",
@@ -292,6 +305,7 @@ func (p *GmailPlugin) registerDeleteLabel(r *agent.ToolRegistry) {
 	})
 }
 
+// registerModifyLabels 注册 modify_labels 工具
 func (p *GmailPlugin) registerModifyLabels(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "modify_labels",

@@ -1,3 +1,4 @@
+// 知识库存储和检索
 package knowledge
 
 import (
@@ -13,18 +14,21 @@ import (
 	"gmailbot/internal/plugin"
 )
 
+// Document 知识库文档
 type Document struct {
 	ID      string `json:"id"`
 	Title   string `json:"title"`
 	Content string `json:"content"`
 }
 
+// Store 基于文件系统的知识库
 type Store struct {
 	mu   sync.RWMutex
 	root string
 	docs map[string]*Document
 }
 
+// NewStore 创建知识库，启动时加载已有文档
 func NewStore(root string) *Store {
 	s := &Store{
 		root: root,
@@ -34,6 +38,7 @@ func NewStore(root string) *Store {
 	return s
 }
 
+// loadExisting 扫描 root 目录，加载所有 .md 文档到内存
 func (s *Store) loadExisting() {
 	_ = os.MkdirAll(s.root, 0755)
 	entries, err := os.ReadDir(s.root)
@@ -57,6 +62,7 @@ func (s *Store) loadExisting() {
 	}
 }
 
+// Add 添加文档并持久化到磁盘
 func (s *Store) Add(_ context.Context, id, title, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,6 +72,7 @@ func (s *Store) Add(_ context.Context, id, title, content string) error {
 	return os.WriteFile(filepath.Join(s.root, id+".md"), []byte(content), 0644)
 }
 
+// Delete 删除文档
 func (s *Store) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,6 +84,7 @@ func (s *Store) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// Search 按关键词搜索文档，按嵌入频次降序返回 topK 结果
 func (s *Store) Search(_ context.Context, query string, topK int) []SearchResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -119,6 +127,7 @@ func (s *Store) Search(_ context.Context, query string, topK int) []SearchResult
 	return results
 }
 
+// List 返回所有文档的 ID 和标题
 func (s *Store) List() []Document {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -129,6 +138,7 @@ func (s *Store) List() []Document {
 	return docs
 }
 
+// SearchResult 检索结果
 type SearchResult struct {
 	DocID   string `json:"doc_id"`
 	Title   string `json:"title"`
@@ -136,6 +146,7 @@ type SearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
+// extractSnippet 提取关键词付近的文本片段
 func extractSnippet(content, keyword string, maxLen int) string {
 	lower := strings.ToLower(content)
 	kwLower := strings.ToLower(keyword)
@@ -164,10 +175,12 @@ func extractSnippet(content, keyword string, maxLen int) string {
 	return snippet
 }
 
+// KnowledgePlugin 知识库插件
 type KnowledgePlugin struct {
 	store *Store
 }
 
+// NewPlugin 创建知识库插件
 func NewPlugin(store *Store) *KnowledgePlugin {
 	return &KnowledgePlugin{store: store}
 }
@@ -178,6 +191,7 @@ func (p *KnowledgePlugin) Shutdown() error                  { return nil }
 func (p *KnowledgePlugin) Commands() []plugin.Command       { return nil }
 func (p *KnowledgePlugin) EventHandlers() []plugin.EventSub { return nil }
 
+// Init 注册全部知识库工具
 func (p *KnowledgePlugin) Init(ctx *plugin.Context) error {
 	p.registerAdd(ctx.Registry)
 	p.registerSearch(ctx.Registry)
@@ -186,6 +200,7 @@ func (p *KnowledgePlugin) Init(ctx *plugin.Context) error {
 	return nil
 }
 
+// registerAdd 注册 knowledge_add 工具
 func (p *KnowledgePlugin) registerAdd(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "knowledge_add",
@@ -217,6 +232,7 @@ func (p *KnowledgePlugin) registerAdd(r *agent.ToolRegistry) {
 	})
 }
 
+// registerSearch 注册 knowledge_search 工具
 func (p *KnowledgePlugin) registerSearch(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "knowledge_search",
@@ -243,6 +259,7 @@ func (p *KnowledgePlugin) registerSearch(r *agent.ToolRegistry) {
 	})
 }
 
+// registerList 注册 knowledge_list 工具
 func (p *KnowledgePlugin) registerList(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "knowledge_list",
@@ -260,6 +277,7 @@ func (p *KnowledgePlugin) registerList(r *agent.ToolRegistry) {
 	})
 }
 
+// registerDelete 注册 knowledge_delete 工具
 func (p *KnowledgePlugin) registerDelete(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "knowledge_delete",
@@ -287,6 +305,7 @@ func (p *KnowledgePlugin) registerDelete(r *agent.ToolRegistry) {
 	})
 }
 
+// GetRetriever 返回检索函数
 func (p *KnowledgePlugin) GetRetriever() func(query string) string {
 	return func(query string) string {
 		results := p.store.Search(context.Background(), query, 3)

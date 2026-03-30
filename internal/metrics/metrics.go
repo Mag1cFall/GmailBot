@@ -1,3 +1,4 @@
+// 业务指标统计
 package metrics
 
 import (
@@ -6,6 +7,7 @@ import (
 	"time"
 )
 
+// Metrics 运行时指标
 type Metrics struct {
 	MessagesTotal  atomic.Int64
 	ToolCallsTotal atomic.Int64
@@ -14,6 +16,7 @@ type Metrics struct {
 	StartTime      time.Time
 }
 
+// Snapshot 指标快照
 type Snapshot struct {
 	MessagesTotal  int64     `json:"messages_total"`
 	ToolCallsTotal int64     `json:"tool_calls_total"`
@@ -25,10 +28,12 @@ type Snapshot struct {
 
 var Default = New()
 
+// New 创建指标实例
 func New() *Metrics {
 	return &Metrics{StartTime: time.Now()}
 }
 
+// MarkActiveUser 记录活跃用户，用于统计独立用户数
 func (m *Metrics) MarkActiveUser(identity string) {
 	if identity == "" {
 		return
@@ -36,6 +41,7 @@ func (m *Metrics) MarkActiveUser(identity string) {
 	m.ActiveUsers.Store(identity, time.Now())
 }
 
+// Snapshot 生成当前指标快照
 func (m *Metrics) Snapshot() Snapshot {
 	var active int64
 	m.ActiveUsers.Range(func(key, value any) bool {

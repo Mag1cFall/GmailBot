@@ -1,3 +1,4 @@
+// SQLite 持久化层
 package store
 
 import (
@@ -15,6 +16,7 @@ import (
 
 const maxSessionMessages = 50
 
+// User 用户数据
 type User struct {
 	TgUserID         int64
 	Platform         string
@@ -37,12 +39,14 @@ func (u User) DigestTimeRaw() string {
 	return strings.Join(u.DigestTimes, ",")
 }
 
+// SessionMessage 会话消息
 type SessionMessage struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Session 对话会话
 type Session struct {
 	ID          string
 	TgUserID    int64
@@ -56,6 +60,7 @@ type Session struct {
 	IsActive    bool
 }
 
+// SessionSummary 会话摘要
 type SessionSummary struct {
 	ID         string
 	Title      string
@@ -63,6 +68,7 @@ type SessionSummary struct {
 	IsActive   bool
 }
 
+// Reminder 提醒事项
 type Reminder struct {
 	ID        string
 	UserKey   int64

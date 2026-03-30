@@ -1,3 +1,4 @@
+// 子 Agent 编排，支持任务委派
 package agent
 
 import (
@@ -10,12 +11,14 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// SubAgent 子 Agent 定义
 type SubAgent struct {
 	Name         string
 	Instructions string
 	ToolNames    []string
 }
 
+// SubAgentOrchestrator 子 Agent 编排器
 type SubAgentOrchestrator struct {
 	mu       sync.RWMutex
 	agents   map[string]*SubAgent
@@ -24,6 +27,7 @@ type SubAgentOrchestrator struct {
 	maxSteps int
 }
 
+// NewSubAgentOrchestrator 创建子 Agent 编排器
 func NewSubAgentOrchestrator(registry *ToolRegistry, provider *ProviderManager, maxSteps int) *SubAgentOrchestrator {
 	return &SubAgentOrchestrator{
 		agents:   make(map[string]*SubAgent),
@@ -33,12 +37,14 @@ func NewSubAgentOrchestrator(registry *ToolRegistry, provider *ProviderManager, 
 	}
 }
 
+// RegisterAgent 注册子 Agent
 func (o *SubAgentOrchestrator) RegisterAgent(sa *SubAgent) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.agents[sa.Name] = sa
 }
 
+// RegisterHandoffTools 注册 handoff 工具到主 registry
 func (o *SubAgentOrchestrator) RegisterHandoffTools(registry *ToolRegistry) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
@@ -67,6 +73,7 @@ func (o *SubAgentOrchestrator) RegisterHandoffTools(registry *ToolRegistry) {
 	}
 }
 
+// RunSubAgent 运行子 Agent 处理任务
 func (o *SubAgentOrchestrator) RunSubAgent(parent *ToolContext, sa *SubAgent, task string) (string, error) {
 	ctx := context.Background()
 	toolCtx := &ToolContext{Extra: map[string]any{}}
@@ -160,6 +167,7 @@ func (o *SubAgentOrchestrator) RunSubAgent(parent *ToolContext, sa *SubAgent, ta
 	return "子 Agent 达到步数上限。", nil
 }
 
+// cloneExtra 深拷贝 Extra map，避免子 Agent 修改父上下文
 func cloneExtra(extra map[string]any) map[string]any {
 	if len(extra) == 0 {
 		return map[string]any{}

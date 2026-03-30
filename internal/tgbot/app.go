@@ -1,3 +1,4 @@
+// Telegram Bot 应用层，组装管线和命令路由
 package tgbot
 
 import (
@@ -21,11 +22,13 @@ import (
 	"gmailbot/internal/store"
 )
 
+// ConfigOption 可修改配置项
 type ConfigOption struct {
 	Key     string
 	Display string
 }
 
+// App Bot 应用核心
 type App struct {
 	mu            sync.Mutex
 	cfg           config.Config
@@ -39,6 +42,7 @@ type App struct {
 	pendingConfig map[string]string
 }
 
+// NewApp 创建 Bot 应用并初始化命令路由和管线
 func NewApp(cfg config.Config, st *store.Store, gmailService *gmail.Service, agent *agentpkg.Agent, memStore *memory.Store) (*App, error) {
 	app := &App{
 		cfg:           cfg,
@@ -56,6 +60,7 @@ func NewApp(cfg config.Config, st *store.Store, gmailService *gmail.Service, age
 	return app, nil
 }
 
+// setupPipeline 构建消息处理管线，包括认证、限流、AI 处理和安全过滤
 func (a *App) setupPipeline() {
 	p := pipeline.New()
 	p.AddStage(&pipeline.AuthCheckStage{
@@ -85,6 +90,7 @@ func (a *App) setupPipeline() {
 	a.pipeline = p
 }
 
+// HandleMessage 处理入站消息，先走命令路由再走管线
 func (a *App) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) (platform.UnifiedResponse, error) {
 	msg.Text = strings.TrimSpace(msg.Text)
 	if msg.Text == "" {
@@ -124,19 +130,23 @@ func (a *App) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) (p
 	return evt.Response, nil
 }
 
+// Commands 返回所有已注册命令
 func (a *App) Commands() []platform.Command {
 	return a.router.Commands()
 }
 
+// Reload 更新配置并重建管线
 func (a *App) Reload(cfg config.Config) {
 	a.cfg = cfg
 	a.setupPipeline()
 }
 
+// SetPersonaManager 注入人设管理器
 func (a *App) SetPersonaManager(manager *persona.Manager) {
 	a.personaMgr = manager
 }
 
+// RegisterPluginCommands 将插件命令注册到路由器
 func (a *App) RegisterPluginCommands(commands []plugin.Command) error {
 	for _, command := range commands {
 		commandCopy := command
@@ -157,6 +167,7 @@ func (a *App) RegisterPluginCommands(commands []plugin.Command) error {
 	return nil
 }
 
+// ConfigOptions 返回可编辑的配置项及当前预览展示
 func (a *App) ConfigOptions() []ConfigOption {
 	options := make([]ConfigOption, 0, len(config.EditableKeys))
 	for _, key := range config.EditableKeys {
@@ -170,6 +181,7 @@ func (a *App) ConfigOptions() []ConfigOption {
 	return options
 }
 
+// HandleConfigSelection 记录用户将要修改的配置项并请求新値
 func (a *App) HandleConfigSelection(msg platform.UnifiedMessage, key string) (platform.UnifiedResponse, error) {
 	valid := false
 	for _, candidate := range config.EditableKeys {
@@ -191,6 +203,7 @@ func (a *App) HandleConfigSelection(msg platform.UnifiedMessage, key string) (pl
 	}, nil
 }
 
+// handlePendingConfig 如果用户处于配置输入状态则处理输入内容
 func (a *App) handlePendingConfig(msg platform.UnifiedMessage) (platform.UnifiedResponse, bool, error) {
 	identity := a.identityKey(msg)
 	a.mu.Lock()
@@ -206,6 +219,7 @@ func (a *App) handlePendingConfig(msg platform.UnifiedMessage) (platform.Unified
 	return resp, true, err
 }
 
+// applyConfigValue 将关键値写入 .env 并触发热重载
 func (a *App) applyConfigValue(msg platform.UnifiedMessage, key, value string) (platform.UnifiedResponse, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -224,6 +238,7 @@ func (a *App) applyConfigValue(msg platform.UnifiedMessage, key, value string) (
 	}, nil
 }
 
+// identityKey 生成用户唯一标识
 func (a *App) identityKey(msg platform.UnifiedMessage) string {
 	platformName := strings.TrimSpace(msg.Platform)
 	if platformName == "" {
@@ -232,6 +247,7 @@ func (a *App) identityKey(msg platform.UnifiedMessage) string {
 	return platformName + ":" + strings.TrimSpace(msg.UserID)
 }
 
+// resolveUserKey 解析用户内部 ID
 func (a *App) resolveUserKey(ctx context.Context, msg platform.UnifiedMessage) (int64, error) {
 	platformName := strings.TrimSpace(msg.Platform)
 	if platformName == "" {
@@ -240,14 +256,17 @@ func (a *App) resolveUserKey(ctx context.Context, msg platform.UnifiedMessage) (
 	return a.store.ResolvePlatformUserKey(ctx, platformName, msg.UserID)
 }
 
+// shortCtx 创建 20s 超时上下文，用于快速类操作
 func (a *App) shortCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 20*time.Second)
 }
 
+// aiCtx 创建 AI 超时上下文
 func (a *App) aiCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), time.Duration(a.cfg.AITimeoutSec)*time.Second)
 }
 
+// commandArgs 提取命令参数，跳过第一个命令词
 func commandArgs(text string) []string {
 	parts := strings.Fields(strings.TrimSpace(text))
 	if len(parts) <= 1 {
@@ -256,6 +275,7 @@ func commandArgs(text string) []string {
 	return parts[1:]
 }
 
+// parseBoundedInt 解析整数参数，并限制在 [min, max] 范围内
 func parseBoundedInt(args []string, def, min, max int) int {
 	if len(args) == 0 {
 		return def
@@ -273,6 +293,7 @@ func parseBoundedInt(args []string, def, min, max int) int {
 	return v
 }
 
+// trimForDisplay 截断过长文本用于展示
 func trimForDisplay(text string, max int) string {
 	text = strings.TrimSpace(text)
 	if max <= 0 || len(text) <= max {
@@ -281,6 +302,7 @@ func trimForDisplay(text string, max int) string {
 	return text[:max] + "..."
 }
 
+// formatEmailList 格式化邮件列表展示
 func formatEmailList(title string, emails []gmail.EmailSummary) string {
 	lines := []string{title + "："}
 	for i, item := range emails {
@@ -300,6 +322,7 @@ func formatEmailList(title string, emails []gmail.EmailSummary) string {
 	return strings.Join(lines, "\n\n")
 }
 
+// collectSensitivePatterns 收集敏感字符串用于安全过滤
 func collectSensitivePatterns(cfg config.Config) []string {
 	var patterns []string
 	seen := map[string]struct{}{}
@@ -332,6 +355,7 @@ func collectSensitivePatterns(cfg config.Config) []string {
 	return patterns
 }
 
+// isSensitiveEnvKey 判断环境变量名是否属于敏感类
 func isSensitiveEnvKey(key string) bool {
 	key = strings.ToUpper(strings.TrimSpace(key))
 	for _, marker := range []string{"KEY", "TOKEN", "SECRET", "AUTH", "PASSWORD"} {

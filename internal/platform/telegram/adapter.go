@@ -1,3 +1,4 @@
+// Telegram 平台适配器
 package telegram
 
 import (
@@ -16,15 +17,19 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
+// headingRe 匹配 Markdown 标题
 var headingRe = regexp.MustCompile(`^#{1,6}\s+(.+)$`)
+// boldRe 匹配 Markdown 粗体
 var boldRe = regexp.MustCompile(`\*\*(.+?)\*\*`)
 
+// Adapter Telegram Bot 适配器
 type Adapter struct {
 	app      *tgbot.App
 	bot      *tele.Bot
 	stopOnce sync.Once
 }
 
+// NewAdapter 创建 Telegram 适配器
 func NewAdapter(cfg config.Config, app *tgbot.App) (*Adapter, error) {
 	bot, err := tele.NewBot(tele.Settings{
 		Token:  cfg.BotToken,
@@ -36,10 +41,12 @@ func NewAdapter(cfg config.Config, app *tgbot.App) (*Adapter, error) {
 	return &Adapter{app: app, bot: bot}, nil
 }
 
+// Name 返回平台名称
 func (a *Adapter) Name() string {
 	return "telegram"
 }
 
+// Start 启动消息轮询，注册命令和文本处理器
 func (a *Adapter) Start(ctx context.Context, handler baseplatform.MessageHandler) error {
 	for _, command := range a.app.Commands() {
 		a.bot.Handle("/"+command.Name, a.handleText(ctx, handler))
@@ -56,6 +63,7 @@ func (a *Adapter) Start(ctx context.Context, handler baseplatform.MessageHandler
 	return nil
 }
 
+// Stop 优雅关闭 Bot
 func (a *Adapter) Stop() error {
 	a.stopOnce.Do(func() {
 		a.bot.Stop()
@@ -63,6 +71,7 @@ func (a *Adapter) Stop() error {
 	return nil
 }
 
+// Send 向指定 Telegram 用户发送响应
 func (a *Adapter) Send(ctx context.Context, userID string, resp baseplatform.UnifiedResponse) error {
 	id, err := strconv.ParseInt(strings.TrimSpace(userID), 10, 64)
 	if err != nil {
@@ -71,6 +80,7 @@ func (a *Adapter) Send(ctx context.Context, userID string, resp baseplatform.Uni
 	return a.sendToChat(ctx, &tele.User{ID: id}, resp, nil)
 }
 
+// handleText 将 Telegram 消息转换为统一消息并分发给处理函数
 func (a *Adapter) handleText(ctx context.Context, handler baseplatform.MessageHandler) func(tele.Context) error {
 	return func(c tele.Context) error {
 		msg := baseplatform.UnifiedMessage{
@@ -95,6 +105,7 @@ func (a *Adapter) handleText(ctx context.Context, handler baseplatform.MessageHa
 	}
 }
 
+// handleConfigCallback 处理配置内联键盘回调
 func (a *Adapter) handleConfigCallback(ctx context.Context) func(tele.Context) error {
 	return func(c tele.Context) error {
 		resp, err := a.app.HandleConfigSelection(baseplatform.UnifiedMessage{
@@ -110,6 +121,7 @@ func (a *Adapter) handleConfigCallback(ctx context.Context) func(tele.Context) e
 	}
 }
 
+// registerCommands 向 Telegram 注册命令列表
 func (a *Adapter) registerCommands() {
 	commands := make([]tele.Command, 0, len(a.app.Commands()))
 	for _, command := range a.app.Commands() {
@@ -118,6 +130,7 @@ func (a *Adapter) registerCommands() {
 	_ = a.bot.SetCommands(commands)
 }
 
+// buildConfigMarkup 构建配置项内联键盘
 func (a *Adapter) buildConfigMarkup() *tele.ReplyMarkup {
 	markup := &tele.ReplyMarkup{}
 	rows := make([][]tele.InlineButton, 0, len(a.app.ConfigOptions()))
@@ -128,6 +141,7 @@ func (a *Adapter) buildConfigMarkup() *tele.ReplyMarkup {
 	return markup
 }
 
+// sendToChat 发送响应，加马克需要减词且超长自动分片
 func (a *Adapter) sendToChat(ctx context.Context, recipient tele.Recipient, resp baseplatform.UnifiedResponse, markup *tele.ReplyMarkup) error {
 	text := resp.Text
 	if resp.Markdown {
@@ -147,6 +161,7 @@ func (a *Adapter) sendToChat(ctx context.Context, recipient tele.Recipient, resp
 	return nil
 }
 
+// markupIfFirst 仅第一个分片携带键盘
 func markupIfFirst(markup *tele.ReplyMarkup, index int) *tele.ReplyMarkup {
 	if index == 0 {
 		return markup
@@ -154,6 +169,7 @@ func markupIfFirst(markup *tele.ReplyMarkup, index int) *tele.ReplyMarkup {
 	return nil
 }
 
+// splitBySize 按字节数将文本拆分为多片，尽量不切断行
 func splitBySize(text string, chunkSize int) []string {
 	if len(text) <= chunkSize {
 		return []string{text}
@@ -186,6 +202,7 @@ func splitBySize(text string, chunkSize int) []string {
 	return chunks
 }
 
+// mdToTelegram 将部分 Markdown 语法转换为 Telegram 支持的标记
 func mdToTelegram(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
@@ -216,6 +233,7 @@ func mdToTelegram(s string) string {
 	return result
 }
 
+// isConfigCommand 判断是否为 /config 命令
 func isConfigCommand(text string) bool {
 	text = strings.TrimSpace(text)
 	return text == "/config" || strings.HasPrefix(text, "/config@")

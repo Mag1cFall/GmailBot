@@ -1,3 +1,4 @@
+// AI Agent 核心，管理 LLM 对话和工具调用
 package agent
 
 import (
@@ -31,20 +32,24 @@ const langRules = `
 - 禁止使用以下措辞："我直接把"、"下面把你"、"你现在"、"你只需要"、"二选一"、"我不跟你"、"你要我"、"要是你"、"如果你坚持"、"但你得"、"不需要你决定"、"不需要你认同"、"你的问题是"、"你的担忧是"、"已XX"、"说明如下"、"答复如下"、"不涉及XX"、"不说教"、"不鸡汤"、"不装"、"不躲"、"不绕"
 `
 
+// PromptSection 提示词片段
 type PromptSection struct {
 	Label   string
 	Content string
 }
 
+// PromptBuilder 系统提示词组装器
 type PromptBuilder struct {
 	mu       sync.RWMutex
 	sections []PromptSection
 }
 
+// NewPromptBuilder 创建空的提示词组装器
 func NewPromptBuilder() *PromptBuilder {
 	return &PromptBuilder{}
 }
 
+// SetSection 设置或更新指定标签的提示词段
 func (pb *PromptBuilder) SetSection(label, content string) {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
@@ -57,6 +62,7 @@ func (pb *PromptBuilder) SetSection(label, content string) {
 	pb.sections = append(pb.sections, PromptSection{Label: label, Content: content})
 }
 
+// RemoveSection 移除指定标签的提示词段
 func (pb *PromptBuilder) RemoveSection(label string) {
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
@@ -68,6 +74,7 @@ func (pb *PromptBuilder) RemoveSection(label string) {
 	}
 }
 
+// Build 拼接全部提示词段和工具列表
 func (pb *PromptBuilder) Build(registry *ToolRegistry) string {
 	if registry == nil {
 		return pb.BuildWithTools(nil, nil)
@@ -75,6 +82,7 @@ func (pb *PromptBuilder) Build(registry *ToolRegistry) string {
 	return pb.BuildWithTools(registry.ActiveTools(), nil)
 }
 
+// BuildWithTools 拼接提示词段，支持覆盖和工具列表
 func (pb *PromptBuilder) BuildWithTools(tools []*ToolDef, overrides map[string]string) string {
 	pb.mu.RLock()
 	sections := append([]PromptSection(nil), pb.sections...)
@@ -117,6 +125,7 @@ func (pb *PromptBuilder) BuildWithTools(tools []*ToolDef, overrides map[string]s
 	return strings.TrimSpace(sb.String())
 }
 
+// Agent 核心 AI 代理
 type Agent struct {
 	mu            sync.RWMutex
 	providerMgr   *ProviderManager
@@ -127,6 +136,7 @@ type Agent struct {
 	personaMgr    *persona.Manager
 }
 
+// NewAgent 创建 Agent，加载 AI 服务商配置和默认提示词
 func NewAgent(cfg config.Config, registry *ToolRegistry, st *store.Store) *Agent {
 	pm := NewProviderManager()
 	pm.LoadFromConfig(cfg)
@@ -154,22 +164,27 @@ func NewAgent(cfg config.Config, registry *ToolRegistry, st *store.Store) *Agent
 	}
 }
 
+// Registry 返回工具注册表
 func (a *Agent) Registry() *ToolRegistry {
 	return a.registry
 }
 
+// PromptBuilder 返回提示词组装器
 func (a *Agent) PromptBuilder() *PromptBuilder {
 	return a.promptBuilder
 }
 
+// ProviderManager 返回 AI 服务商管理器
 func (a *Agent) ProviderManager() *ProviderManager {
 	return a.providerMgr
 }
 
+// SetPersonaManager 注入人设管理器
 func (a *Agent) SetPersonaManager(manager *persona.Manager) {
 	a.personaMgr = manager
 }
 
+// Reload 热重载 AI 服务商配置和工具步数上限
 func (a *Agent) Reload(cfg config.Config) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -179,10 +194,12 @@ func (a *Agent) Reload(cfg config.Config) {
 	}
 }
 
+// Model 返回当前主服务商的模型名
 func (a *Agent) Model() string {
 	return a.providerMgr.PrimaryModel()
 }
 
+// HandleUserMessage 处理 Telegram 用户消息（兼容旧接口）
 func (a *Agent) HandleUserMessage(ctx context.Context, tgUserID int64, userText string) (string, error) {
 	resp, err := a.HandleMessage(ctx, platform.UnifiedMessage{
 		Platform:  "telegram",
@@ -196,6 +213,7 @@ func (a *Agent) HandleUserMessage(ctx context.Context, tgUserID int64, userText 
 	return resp.Text, nil
 }
 
+// HandleMessage 处理统一消息，执行对话和工具调用
 func (a *Agent) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) (platform.UnifiedResponse, error) {
 	userText := strings.TrimSpace(msg.Text)
 	if userText == "" {
@@ -269,6 +287,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) 
 	return platform.UnifiedResponse{Text: reply, Markdown: true}, nil
 }
 
+// GenerateDailyDigest 生成每日邮件摘要
 func (a *Agent) GenerateDailyDigest(ctx context.Context, tgUserID int64) (string, error) {
 	toolCtx := &ToolContext{Context: ctx, TgUserID: tgUserID, Platform: "telegram", UserID: strconv.FormatInt(tgUserID, 10), Extra: map[string]any{}}
 	listTool, ok := a.registry.Get("list_emails")
@@ -326,6 +345,7 @@ func (a *Agent) GenerateDailyDigest(ctx context.Context, tgUserID int64) (string
 	return content, nil
 }
 
+// JudgeEmailImportance 判断邮件是否值得推送
 func (a *Agent) JudgeEmailImportance(ctx context.Context, tgUserID int64, subject, from, snippet string) (bool, string, error) {
 	prompt := fmt.Sprintf(
 		"判断以下邮件是否值得立即推送通知给用户。\n\n"+
@@ -364,6 +384,7 @@ func (a *Agent) JudgeEmailImportance(ctx context.Context, tgUserID int64, subjec
 	return result.Important, result.Reason, nil
 }
 
+// chatWithTools 带工具调用的多轮对话循环
 func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, messages []ChatMessage, toolDefs []*ToolDef, model string) (string, error) {
 	tools := OpenAIToolsFromDefs(toolDefs)
 	allowedTools := map[string]struct{}{}

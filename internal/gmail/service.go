@@ -1,3 +1,4 @@
+// Gmail API 封装，OAuth 授权和邮件 CRUD
 package gmail
 
 import (
@@ -24,12 +25,14 @@ import (
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
+// Service Gmail 服务
 type Service struct {
 	oauthConfig *oauth2.Config
 	store       *store.Store
 	httpClient  *http.Client
 }
 
+// EmailSummary 邮件摘要
 type EmailSummary struct {
 	ID       string `json:"id"`
 	ThreadID string `json:"thread_id"`
@@ -39,6 +42,7 @@ type EmailSummary struct {
 	Snippet  string `json:"snippet"`
 }
 
+// EmailDetail 邮件详情
 type EmailDetail struct {
 	ID       string   `json:"id"`
 	ThreadID string   `json:"thread_id"`
@@ -51,6 +55,7 @@ type EmailDetail struct {
 	Body     string   `json:"body"`
 }
 
+// Label Gmail 标签
 type Label struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -58,6 +63,7 @@ type Label struct {
 	MessagesTotal int64  `json:"messages_total"`
 }
 
+// NewService 创建 Gmail 服务
 func NewService(cfg config.Config, st *store.Store) *Service {
 	return &Service{
 		oauthConfig: &oauth2.Config{
@@ -81,6 +87,7 @@ func NewService(cfg config.Config, st *store.Store) *Service {
 	}
 }
 
+// ensureOAuthConfigured 检查 OAuth 客户端配置是否齐全
 func (s *Service) ensureOAuthConfigured() error {
 	if strings.TrimSpace(s.oauthConfig.ClientID) == "" || strings.TrimSpace(s.oauthConfig.ClientSecret) == "" {
 		return errors.New("gmail oauth is not configured, please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
@@ -88,6 +95,7 @@ func (s *Service) ensureOAuthConfigured() error {
 	return nil
 }
 
+// AuthCodeURL 生成 OAuth 授权链接
 func (s *Service) AuthCodeURL(state string) string {
 	if err := s.ensureOAuthConfigured(); err != nil {
 		return err.Error()
@@ -99,6 +107,7 @@ func (s *Service) AuthCodeURL(state string) string {
 	)
 }
 
+// ParseCode 从 URL 或原始文本提取授权码
 func (s *Service) ParseCode(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -118,6 +127,7 @@ func (s *Service) ParseCode(raw string) (string, error) {
 	return raw, nil
 }
 
+// ExchangeCode 用授权码换取 Token
 func (s *Service) ExchangeCode(ctx context.Context, code string) (*oauth2.Token, error) {
 	if err := s.ensureOAuthConfigured(); err != nil {
 		return nil, err
@@ -133,6 +143,7 @@ func (s *Service) ExchangeCode(ctx context.Context, code string) (*oauth2.Token,
 	return token, nil
 }
 
+// SaveTokenForUser 保存用户 OAuth Token 到数据库
 func (s *Service) SaveTokenForUser(
 	ctx context.Context,
 	tgUserID int64,
@@ -152,6 +163,7 @@ func (s *Service) SaveTokenForUser(
 	)
 }
 
+// GetProfileEmailByToken 用 Token 获取用户 Gmail 地址
 func (s *Service) GetProfileEmailByToken(ctx context.Context, token *oauth2.Token) (string, error) {
 	if token == nil {
 		return "", errors.New("token is nil")
@@ -168,6 +180,7 @@ func (s *Service) GetProfileEmailByToken(ctx context.Context, token *oauth2.Toke
 	return strings.TrimSpace(profile.EmailAddress), nil
 }
 
+// ListEmails 列出邮件
 func (s *Service) ListEmails(ctx context.Context, tgUserID int64, limit int, query string) ([]EmailSummary, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
@@ -211,10 +224,12 @@ func (s *Service) ListEmails(ctx context.Context, tgUserID int64, limit int, que
 	return summaries, nil
 }
 
+// ListUnread 列出未读邮件
 func (s *Service) ListUnread(ctx context.Context, tgUserID int64, limit int) ([]EmailSummary, error) {
 	return s.ListEmails(ctx, tgUserID, limit, "is:unread")
 }
 
+// GetEmail 获取邮件详情
 func (s *Service) GetEmail(ctx context.Context, tgUserID int64, emailID string) (EmailDetail, error) {
 	emailID = strings.TrimSpace(emailID)
 	if emailID == "" {
@@ -246,6 +261,7 @@ func (s *Service) GetEmail(ctx context.Context, tgUserID int64, emailID string) 
 	}, nil
 }
 
+// GetLabels 获取用户所有 Gmail 标签
 func (s *Service) GetLabels(ctx context.Context, tgUserID int64) ([]Label, error) {
 	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -267,6 +283,7 @@ func (s *Service) GetLabels(ctx context.Context, tgUserID int64) ([]Label, error
 	return out, nil
 }
 
+// Revoke 撤销 OAuth 授权
 func (s *Service) Revoke(ctx context.Context, tgUserID int64) error {
 	user, err := s.store.GetUser(ctx, tgUserID)
 	if err != nil {
@@ -306,6 +323,7 @@ func (s *Service) Revoke(ctx context.Context, tgUserID int64) error {
 	return s.store.ClearUserTokens(ctx, tgUserID)
 }
 
+// MarshalEmailSummaries 将邮件摘要列表序列化为 JSON 字符串
 func (s *Service) MarshalEmailSummaries(emails []EmailSummary) string {
 	data, err := json.Marshal(emails)
 	if err != nil {
@@ -314,6 +332,7 @@ func (s *Service) MarshalEmailSummaries(emails []EmailSummary) string {
 	return string(data)
 }
 
+// gmailClientForUser 为指定用户构建已授权的 Gmail 客户端，自动处理 Token 刷新
 func (s *Service) gmailClientForUser(ctx context.Context, tgUserID int64) (*gmail.Service, store.User, error) {
 	user, err := s.store.GetUser(ctx, tgUserID)
 	if err != nil {
@@ -363,6 +382,7 @@ func (s *Service) gmailClientForUser(ctx context.Context, tgUserID int64) (*gmai
 	return gmailSvc, user, nil
 }
 
+// shouldPersistRefreshedToken 判断刷新后的 Token 是否需要回写数据库
 func shouldPersistRefreshedToken(user store.User, token *oauth2.Token) bool {
 	if token == nil {
 		return false
@@ -380,6 +400,7 @@ func shouldPersistRefreshedToken(user store.User, token *oauth2.Token) bool {
 	return false
 }
 
+// toHeaderMap 将邮件 Part 头部转为小写 key 的 map
 func toHeaderMap(payload *gmail.MessagePart) map[string]string {
 	headers := map[string]string{
 		"subject": "(无主题)",
@@ -410,6 +431,7 @@ func toHeaderMap(payload *gmail.MessagePart) map[string]string {
 	return headers
 }
 
+// extractMessageBody 递归提取邮件正文，优先返回纯文本部分
 func extractMessageBody(part *gmail.MessagePart) string {
 	if part == nil {
 		return ""
@@ -437,6 +459,7 @@ func extractMessageBody(part *gmail.MessagePart) string {
 	return strings.TrimSpace(htmlText)
 }
 
+// decodePartBody Base64 解码邮件部分正文，HTML 部分会进行副文本化
 func decodePartBody(mimeType string, body *gmail.MessagePartBody) string {
 	if body == nil || strings.TrimSpace(body.Data) == "" {
 		return ""
@@ -453,6 +476,7 @@ func decodePartBody(mimeType string, body *gmail.MessagePartBody) string {
 	return strings.TrimSpace(content)
 }
 
+// SendEmail 发送邮件
 func (s *Service) SendEmail(ctx context.Context, tgUserID int64, to, subject, body string) (string, error) {
 	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -470,6 +494,7 @@ func (s *Service) SendEmail(ctx context.Context, tgUserID int64, to, subject, bo
 	return sent.Id, nil
 }
 
+// ReplyEmail 回复邮件
 func (s *Service) ReplyEmail(ctx context.Context, tgUserID int64, emailID, body string) (string, error) {
 	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -508,6 +533,7 @@ func (s *Service) ReplyEmail(ctx context.Context, tgUserID int64, emailID, body 
 	return sent.Id, nil
 }
 
+// ForwardEmail 转发邮件
 func (s *Service) ForwardEmail(ctx context.Context, tgUserID int64, emailID, to string) (string, error) {
 	gmailSvc, user, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -547,6 +573,7 @@ func (s *Service) ForwardEmail(ctx context.Context, tgUserID int64, emailID, to 
 	return sent.Id, nil
 }
 
+// CreateLabel 创建标签
 func (s *Service) CreateLabel(ctx context.Context, tgUserID int64, name string) (*Label, error) {
 	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -567,6 +594,7 @@ func (s *Service) CreateLabel(ctx context.Context, tgUserID int64, name string) 
 	}, nil
 }
 
+// DeleteLabel 删除指定标签
 func (s *Service) DeleteLabel(ctx context.Context, tgUserID int64, labelID string) error {
 	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -578,6 +606,7 @@ func (s *Service) DeleteLabel(ctx context.Context, tgUserID int64, labelID strin
 	return nil
 }
 
+// ModifyMessageLabels 给邮件添加或移除标签
 func (s *Service) ModifyMessageLabels(ctx context.Context, tgUserID int64, emailID string, addLabels, removeLabels []string) error {
 	gmailSvc, _, err := s.gmailClientForUser(ctx, tgUserID)
 	if err != nil {
@@ -593,6 +622,7 @@ func (s *Service) ModifyMessageLabels(ctx context.Context, tgUserID int64, email
 	return nil
 }
 
+// buildRawEmail 拼接 RFC 2822 格式的邮件原始内容
 func buildRawEmail(from, to, subject, inReplyTo, references, body string) string {
 	var sb strings.Builder
 	sb.WriteString("From: " + from + "\r\n")

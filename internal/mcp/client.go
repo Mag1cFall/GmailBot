@@ -1,3 +1,4 @@
+// MCP 协议客户端，支持 stdio 和 SSE 两种传输
 package mcp
 
 import (
@@ -21,17 +22,20 @@ import (
 	"gmailbot/internal/agent"
 )
 
+// Tool MCP 工具定义
 type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
+// Manager 管理多个 MCP server 连接
 type Manager struct {
 	registry *agent.ToolRegistry
 	servers  []*serverClient
 }
 
+// serverClient 单个 MCP server 连接
 type serverClient struct {
 	name      string
 	config    ServerConfig
@@ -39,6 +43,7 @@ type serverClient struct {
 	tools     []Tool
 }
 
+// transport MCP 传输层接口
 type transport interface {
 	Initialize(ctx context.Context) error
 	ListTools(ctx context.Context) ([]Tool, error)
@@ -46,6 +51,7 @@ type transport interface {
 	Close() error
 }
 
+// rpcRequest JSON-RPC 2.0 请求
 type rpcRequest struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      int64  `json:"id,omitempty"`
@@ -53,6 +59,7 @@ type rpcRequest struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+// rpcResponse JSON-RPC 2.0 响应
 type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id,omitempty"`
@@ -60,11 +67,13 @@ type rpcResponse struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
+// rpcError JSON-RPC 错误信息
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
+// NewManager 从配置创建 MCP 管理器
 func NewManager(rawConfig string, registry *agent.ToolRegistry) (*Manager, error) {
 	servers, err := ParseServers(rawConfig)
 	if err != nil {
@@ -80,6 +89,7 @@ func NewManager(rawConfig string, registry *agent.ToolRegistry) (*Manager, error
 	return manager, nil
 }
 
+// Start 启动所有 MCP server 并注册工具
 func (m *Manager) Start(ctx context.Context) error {
 	for _, server := range m.servers {
 		if err := server.start(ctx); err != nil {
@@ -90,6 +100,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	return nil
 }
 
+// Shutdown 关闭所有 MCP 连接
 func (m *Manager) Shutdown() error {
 	var joined error
 	for _, server := range m.servers {
@@ -100,6 +111,7 @@ func (m *Manager) Shutdown() error {
 	return joined
 }
 
+// start 根据配置创建传输并初始化
 func (s *serverClient) start(ctx context.Context) error {
 	var tr transport
 	switch s.config.EffectiveTransport() {
@@ -128,6 +140,7 @@ func (s *serverClient) start(ctx context.Context) error {
 	return nil
 }
 
+// registerTools 将 MCP server 的工具注册到全局工具注册表
 func (s *serverClient) registerTools(registry *agent.ToolRegistry) {
 	for _, tool := range s.tools {
 		toolCopy := tool
@@ -154,6 +167,7 @@ func (s *serverClient) registerTools(registry *agent.ToolRegistry) {
 	}
 }
 
+// stdioTransport 通过进程标准 IO 连接 MCP server
 type stdioTransport struct {
 	config ServerConfig
 	cmd    *exec.Cmd
@@ -163,6 +177,7 @@ type stdioTransport struct {
 	nextID int64
 }
 
+// newStdioTransport 创建 stdio 传输
 func newStdioTransport(cfg ServerConfig) (*stdioTransport, error) {
 	if strings.TrimSpace(cfg.Command) == "" {
 		return nil, fmt.Errorf("stdio transport requires command")
@@ -170,6 +185,7 @@ func newStdioTransport(cfg ServerConfig) (*stdioTransport, error) {
 	return &stdioTransport{config: cfg}, nil
 }
 
+// Initialize 启动进程并完成 MCP 基础扏手
 func (t *stdioTransport) Initialize(ctx context.Context) error {
 	commandCtx, cancel := context.WithCancel(ctx)
 	_ = cancel
@@ -204,6 +220,7 @@ func (t *stdioTransport) Initialize(ctx context.Context) error {
 	return t.notify("notifications/initialized", map[string]any{})
 }
 
+// ListTools 获取工具列表
 func (t *stdioTransport) ListTools(ctx context.Context) ([]Tool, error) {
 	raw, err := t.request(ctx, "tools/list", map[string]any{})
 	if err != nil {
@@ -218,6 +235,7 @@ func (t *stdioTransport) ListTools(ctx context.Context) ([]Tool, error) {
 	return result.Tools, nil
 }
 
+// CallTool 调用工具
 func (t *stdioTransport) CallTool(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	var payload any = map[string]any{}
 	if len(args) > 0 {
@@ -230,6 +248,7 @@ func (t *stdioTransport) CallTool(ctx context.Context, name string, args json.Ra
 	return normalizeCallResult(raw), nil
 }
 
+// Close 关闭进程
 func (t *stdioTransport) Close() error {
 	if t.stdin != nil {
 		_ = t.stdin.Close()
@@ -241,12 +260,14 @@ func (t *stdioTransport) Close() error {
 	return nil
 }
 
+// notify 发送不需响应的通知消息
 func (t *stdioTransport) notify(method string, params any) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return writeFramedMessage(t.stdin, rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
 }
 
+// request 发送 JSON-RPC 请求并等待响应
 func (t *stdioTransport) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -287,6 +308,7 @@ func (t *stdioTransport) request(ctx context.Context, method string, params any)
 	}
 }
 
+// sseTransport 通过 HTTP SSE 连接 MCP server
 type sseTransport struct {
 	config   ServerConfig
 	client   *http.Client
@@ -297,6 +319,7 @@ type sseTransport struct {
 	cancel   context.CancelFunc
 }
 
+// newSSETransport 创建 SSE 传输
 func newSSETransport(cfg ServerConfig) (*sseTransport, error) {
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil, fmt.Errorf("sse transport requires url")
@@ -308,6 +331,7 @@ func newSSETransport(cfg ServerConfig) (*sseTransport, error) {
 	}, nil
 }
 
+// Initialize 连接 SSE 并完成初始化扏手
 func (t *sseTransport) Initialize(ctx context.Context) error {
 	connCtx, cancel := context.WithCancel(context.Background())
 	t.cancel = cancel
@@ -347,6 +371,7 @@ func (t *sseTransport) Initialize(ctx context.Context) error {
 	return err
 }
 
+// ListTools 获取工具列表
 func (t *sseTransport) ListTools(ctx context.Context) ([]Tool, error) {
 	raw, err := t.request(ctx, "tools/list", map[string]any{})
 	if err != nil {
@@ -361,6 +386,7 @@ func (t *sseTransport) ListTools(ctx context.Context) ([]Tool, error) {
 	return result.Tools, nil
 }
 
+// CallTool 调用工具
 func (t *sseTransport) CallTool(ctx context.Context, name string, args json.RawMessage) (string, error) {
 	var payload any = map[string]any{}
 	if len(args) > 0 {
@@ -373,6 +399,7 @@ func (t *sseTransport) CallTool(ctx context.Context, name string, args json.RawM
 	return normalizeCallResult(raw), nil
 }
 
+// Close 取消 SSE 连接
 func (t *sseTransport) Close() error {
 	if t.cancel != nil {
 		t.cancel()
@@ -380,6 +407,7 @@ func (t *sseTransport) Close() error {
 	return nil
 }
 
+// request 发送请求，优先等待 SSE 推送的响应
 func (t *sseTransport) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := atomic.AddInt64(&t.nextID, 1)
 	responseCh := make(chan rpcResponse, 1)
@@ -408,6 +436,7 @@ func (t *sseTransport) request(ctx context.Context, method string, params any) (
 	}
 }
 
+// post 通过 HTTP POST 发送 JSON-RPC 请求
 func (t *sseTransport) post(ctx context.Context, id int64, method string, params any) (json.RawMessage, error) {
 	body, err := json.Marshal(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	if err != nil {
@@ -452,6 +481,7 @@ func (t *sseTransport) post(ctx context.Context, id int64, method string, params
 	return nil, nil
 }
 
+// readLoop 持续读取 SSE 流并处理事件
 func (t *sseTransport) readLoop(ctx context.Context, body io.ReadCloser) {
 	defer body.Close()
 	reader := bufio.NewReader(body)
@@ -485,6 +515,7 @@ func (t *sseTransport) readLoop(ctx context.Context, body io.ReadCloser) {
 	}
 }
 
+// processSSEEvent 处理单个 SSE 事件，识别 endpoint 及 JSON-RPC 响应
 func (t *sseTransport) processSSEEvent(eventType, payload string) {
 	if strings.TrimSpace(payload) == "" {
 		return
@@ -515,6 +546,7 @@ func (t *sseTransport) processSSEEvent(eventType, payload string) {
 	}
 }
 
+// writeFramedMessage 将消息写入 stdio 帧格式（Content-Length + JSON）
 func writeFramedMessage(writer io.Writer, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -527,6 +559,7 @@ func writeFramedMessage(writer io.Writer, payload any) error {
 	return err
 }
 
+// readFramedMessage 从 stdio 读取一个帧格式消息
 func readFramedMessage(reader *bufio.Reader) ([]byte, error) {
 	contentLength := 0
 	for {
@@ -557,6 +590,7 @@ func readFramedMessage(reader *bufio.Reader) ([]byte, error) {
 	return message, nil
 }
 
+// normalizeCallResult 将工具返回值解析并重新序列化为 JSON 字符串
 func normalizeCallResult(raw json.RawMessage) string {
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {

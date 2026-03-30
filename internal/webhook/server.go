@@ -1,3 +1,4 @@
+// Webhook HTTP 服务
 package webhook
 
 import (
@@ -10,8 +11,10 @@ import (
 	"sync"
 )
 
+// EventHandler webhook 事件处理函数
 type EventHandler func(eventType string, payload map[string]any)
 
+// Server Webhook HTTP 服务
 type Server struct {
 	addr     string
 	secret   string
@@ -21,6 +24,7 @@ type Server struct {
 	server   *http.Server
 }
 
+// NewServer 创建 Webhook 服务
 func NewServer(addr, secret string) *Server {
 	return &Server{
 		addr:   addr,
@@ -28,12 +32,14 @@ func NewServer(addr, secret string) *Server {
 	}
 }
 
+// OnEvent 注册事件处理器
 func (s *Server) OnEvent(handler EventHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers = append(s.handlers, handler)
 }
 
+// Start 启动 Webhook 服务，addr 为空則跳过
 func (s *Server) Start() error {
 	if strings.TrimSpace(s.addr) == "" {
 		return nil
@@ -66,12 +72,14 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// Stop 关闭 Webhook 服务
 func (s *Server) Stop() {
 	if s.server != nil {
 		_ = s.server.Close()
 	}
 }
 
+// handleWebhook 接收 POST 请求，验证 secret 并异步分发事件
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

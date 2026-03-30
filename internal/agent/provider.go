@@ -1,3 +1,4 @@
+// AI 服务商管理，支持多 provider fallback
 package agent
 
 import (
@@ -13,6 +14,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// ChatMessage 对话消息
 type ChatMessage struct {
 	Role       string
 	Content    string
@@ -21,33 +23,39 @@ type ChatMessage struct {
 	ToolCalls  []openai.ToolCall
 }
 
+// ChatRequest 对话请求
 type ChatRequest struct {
 	Messages []ChatMessage
 	Tools    []openai.Tool
 	Model    string
 }
 
+// ChatResponse 对话响应
 type ChatResponse struct {
 	Content   string
 	ToolCalls []openai.ToolCall
 }
 
+// ProviderInfo 服务商基本信息
 type ProviderInfo struct {
 	Name  string `json:"name"`
 	Model string `json:"model"`
 }
 
+// Provider AI 服务商接口
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 }
 
+// OpenAIProvider OpenAI 兼容 API 服务商
 type OpenAIProvider struct {
 	name   string
 	client *openai.Client
 	model  string
 }
 
+// NewOpenAIProvider 创建 OpenAI 兴容 API 服务商
 func NewOpenAIProvider(name, baseURL, apiKey, model string) *OpenAIProvider {
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
@@ -58,10 +66,12 @@ func NewOpenAIProvider(name, baseURL, apiKey, model string) *OpenAIProvider {
 	}
 }
 
+// Name 返回服务商名称
 func (p *OpenAIProvider) Name() string {
 	return p.name
 }
 
+// Chat 向 OpenAI 兴容接口发起对话
 func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	messages := make([]openai.ChatCompletionMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
@@ -98,6 +108,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (ChatRespons
 	}, nil
 }
 
+// resolveModel 返回实际使用的模型，允许单次请求覆盖
 func (p *OpenAIProvider) resolveModel(override string) string {
 	if strings.TrimSpace(override) != "" {
 		return strings.TrimSpace(override)
@@ -105,15 +116,18 @@ func (p *OpenAIProvider) resolveModel(override string) string {
 	return p.model
 }
 
+// ProviderManager 管理多个 AI 服务商，失败自动 fallback
 type ProviderManager struct {
 	mu        sync.RWMutex
 	providers []Provider
 }
 
+// NewProviderManager 创建空的服务商管理器
 func NewProviderManager() *ProviderManager {
 	return &ProviderManager{}
 }
 
+// LoadFromConfig 从配置重建服务商列表
 func (pm *ProviderManager) LoadFromConfig(cfg config.Config) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -131,6 +145,7 @@ func (pm *ProviderManager) LoadFromConfig(cfg config.Config) {
 	}
 }
 
+// Chat 向 provider 发起对话，失败时逐个尝试 fallback
 func (pm *ProviderManager) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	pm.mu.RLock()
 	providers := make([]Provider, len(pm.providers))
@@ -155,6 +170,7 @@ func (pm *ProviderManager) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 	return ChatResponse{}, fmt.Errorf("all providers failed, last error: %w", lastErr)
 }
 
+// PrimaryModel 返回主服务商的模型名
 func (pm *ProviderManager) PrimaryModel() string {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
@@ -167,6 +183,7 @@ func (pm *ProviderManager) PrimaryModel() string {
 	return pm.providers[0].Name()
 }
 
+// Providers 返回所有服务商的基本信息
 func (pm *ProviderManager) Providers() []ProviderInfo {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()

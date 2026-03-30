@@ -1,3 +1,4 @@
+// 日志系统，支持环形缓冲区存储近期日志
 package logging
 
 import (
@@ -8,6 +9,7 @@ import (
 	"time"
 )
 
+// Entry 日志条目
 type Entry struct {
 	Time    time.Time      `json:"time"`
 	Level   string         `json:"level"`
@@ -15,6 +17,7 @@ type Entry struct {
 	Attrs   map[string]any `json:"attrs"`
 }
 
+// RingBuffer 环形日志缓冲区
 type RingBuffer struct {
 	mu       sync.RWMutex
 	entries  []Entry
@@ -23,6 +26,7 @@ type RingBuffer struct {
 	filled   bool
 }
 
+// Manager 日志管理器
 type Manager struct {
 	logger *slog.Logger
 	buffer *RingBuffer
@@ -33,6 +37,7 @@ var (
 	once           sync.Once
 )
 
+// Init 初始化日志管理器（单例）
 func Init() *Manager {
 	once.Do(func() {
 		buffer := &RingBuffer{capacity: 500}
@@ -45,14 +50,17 @@ func Init() *Manager {
 	return defaultManager
 }
 
+// Logger 获取全局 logger
 func Logger() *slog.Logger {
 	return Init().logger
 }
 
+// BufferEntries 获取缓冲区中的日志条目
 func BufferEntries() []Entry {
 	return Init().buffer.Entries()
 }
 
+// Add 将日志条目写入环形缓冲区，超出容量后覆盖最早的条目
 func (b *RingBuffer) Add(entry Entry) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -72,6 +80,7 @@ func (b *RingBuffer) Add(entry Entry) {
 	b.filled = true
 }
 
+// Entries 按时间顺序返回缓冲区内所有日志条目
 func (b *RingBuffer) Entries() []Entry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -84,10 +93,12 @@ func (b *RingBuffer) Entries() []Entry {
 	return entries
 }
 
+// multiHandler 将多个 slog.Handler 并联
 type multiHandler struct {
 	handlers []slog.Handler
 }
 
+// Enabled 如果任何子 handler 启用该级别则返回 true
 func (h *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	for _, handler := range h.handlers {
 		if handler.Enabled(ctx, level) {
@@ -97,6 +108,7 @@ func (h *multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return false
 }
 
+// Handle 将日志分发给所有子 handler
 func (h *multiHandler) Handle(ctx context.Context, record slog.Record) error {
 	for _, handler := range h.handlers {
 		if err := handler.Handle(ctx, record.Clone()); err != nil {
@@ -106,6 +118,7 @@ func (h *multiHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
+// WithAttrs 克隆并向所有子 handler 添加属性
 func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	handlers := make([]slog.Handler, 0, len(h.handlers))
 	for _, handler := range h.handlers {
@@ -114,6 +127,7 @@ func (h *multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &multiHandler{handlers: handlers}
 }
 
+// WithGroup 克隆并向所有子 handler 设置分组
 func (h *multiHandler) WithGroup(name string) slog.Handler {
 	handlers := make([]slog.Handler, 0, len(h.handlers))
 	for _, handler := range h.handlers {
@@ -122,16 +136,19 @@ func (h *multiHandler) WithGroup(name string) slog.Handler {
 	return &multiHandler{handlers: handlers}
 }
 
+// bufferHandler 将日志写入环形内存缓冲区的 slog.Handler
 type bufferHandler struct {
 	buffer *RingBuffer
 	attrs  []slog.Attr
 	group  string
 }
 
+// Enabled 始终返回 true，接受任意级别
 func (h *bufferHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return true
 }
 
+// Handle 将日志记录转化为 Entry 写入缓冲区
 func (h *bufferHandler) Handle(ctx context.Context, record slog.Record) error {
 	attrs := map[string]any{}
 	for _, attr := range h.attrs {
@@ -145,12 +162,14 @@ func (h *bufferHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
+// WithAttrs 克隆并添加属性
 func (h *bufferHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	combined := append([]slog.Attr{}, h.attrs...)
 	combined = append(combined, attrs...)
 	return &bufferHandler{buffer: h.buffer, attrs: combined, group: h.group}
 }
 
+// WithGroup 克隆并设置分组名
 func (h *bufferHandler) WithGroup(name string) slog.Handler {
 	group := name
 	if h.group != "" {
@@ -159,6 +178,7 @@ func (h *bufferHandler) WithGroup(name string) slog.Handler {
 	return &bufferHandler{buffer: h.buffer, attrs: append([]slog.Attr{}, h.attrs...), group: group}
 }
 
+// attrKey 返回属性的完整键名，如果有分组则加前缀
 func (h *bufferHandler) attrKey(key string) string {
 	if h.group == "" {
 		return key

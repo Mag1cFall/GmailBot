@@ -1,3 +1,4 @@
+// 用户记忆文件存储
 package memory
 
 import (
@@ -13,23 +14,28 @@ import (
 	"gmailbot/internal/plugin"
 )
 
+// Store 基于文件系统的用户记忆存储
 type Store struct {
 	mu   sync.RWMutex
 	root string
 }
 
+// NewStore 创建记忆存储，root 为根目录
 func NewStore(root string) *Store {
 	return &Store{root: root}
 }
 
+// UserDir 返回用户专属记忆目录
 func (s *Store) UserDir(tgUserID int64) string {
 	return filepath.Join(s.root, fmt.Sprintf("%d", tgUserID))
 }
 
+// ensureDir 确保目录存在
 func (s *Store) ensureDir(dir string) error {
 	return os.MkdirAll(dir, 0755)
 }
 
+// ReadFile 读取用户记忆文件，不存在返回空字符串
 func (s *Store) ReadFile(tgUserID int64, name string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -44,6 +50,7 @@ func (s *Store) ReadFile(tgUserID int64, name string) (string, error) {
 	return string(data), nil
 }
 
+// WriteFile 写入用户记忆文件，不存在时创建
 func (s *Store) WriteFile(tgUserID int64, name, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,6 +65,7 @@ func (s *Store) WriteFile(tgUserID int64, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
 }
 
+// AppendFile 向用户记忆文件追加内容
 func (s *Store) AppendFile(tgUserID int64, name, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,6 +86,7 @@ func (s *Store) AppendFile(tgUserID int64, name, content string) error {
 	return err
 }
 
+// ListFiles 列出用户目录下所有 .md 和 .jsonl 文件
 func (s *Store) ListFiles(tgUserID int64) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -99,11 +108,13 @@ func (s *Store) ListFiles(tgUserID int64) ([]string, error) {
 	return files, nil
 }
 
+// FileInfo 文件信息
 type FileInfo struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 }
 
+// ListFilesWithSize 列出文件名和大小
 func (s *Store) ListFilesWithSize(tgUserID int64) ([]FileInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -125,6 +136,7 @@ func (s *Store) ListFilesWithSize(tgUserID int64) ([]FileInfo, error) {
 	return files, nil
 }
 
+// DeleteFile 删除指定用户记忆文件
 func (s *Store) DeleteFile(tgUserID int64, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -139,6 +151,7 @@ func (s *Store) DeleteFile(tgUserID int64, name string) error {
 	return nil
 }
 
+// ClearSessionTranscripts 删除用户 sessions 目录下的所有 .jsonl 对话记录
 func (s *Store) ClearSessionTranscripts(tgUserID int64) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,6 +174,7 @@ func (s *Store) ClearSessionTranscripts(tgUserID int64) (int, error) {
 	return count, nil
 }
 
+// Search 在用户记忆目录中按关键词搜索
 func (s *Store) Search(tgUserID int64, query string) ([]SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -207,12 +221,14 @@ func (s *Store) Search(tgUserID int64, query string) ([]SearchResult, error) {
 	return results, nil
 }
 
+// SearchResult 搜索结果
 type SearchResult struct {
 	File    string `json:"file"`
 	Score   int    `json:"score"`
 	Snippet string `json:"snippet"`
 }
 
+// extractSnippet 提取关键词付近的文本片段
 func extractSnippet(content, keyword string, maxLen int) string {
 	lower := strings.ToLower(content)
 	kwLower := strings.ToLower(keyword)
@@ -241,6 +257,7 @@ func extractSnippet(content, keyword string, maxLen int) string {
 	return snippet
 }
 
+// sortResults 按得分降序排列搜索结果
 func sortResults(results []SearchResult) {
 	for i := 1; i < len(results); i++ {
 		for j := i; j > 0 && results[j].Score > results[j-1].Score; j-- {
@@ -249,6 +266,7 @@ func sortResults(results []SearchResult) {
 	}
 }
 
+// SaveSessionTranscript 将对话消息追加到会话 JSONL 记录文件
 func (s *Store) SaveSessionTranscript(tgUserID int64, sessionID string, role, content string) error {
 	entry := map[string]string{
 		"time":    time.Now().UTC().Format(time.RFC3339),
@@ -259,10 +277,12 @@ func (s *Store) SaveSessionTranscript(tgUserID int64, sessionID string, role, co
 	return s.AppendFile(tgUserID, filepath.Join("sessions", sessionID+".jsonl"), string(data)+"\n")
 }
 
+// MemoryPlugin 记忆插件
 type MemoryPlugin struct {
 	store *Store
 }
 
+// NewPlugin 创建记忆插件
 func NewPlugin(store *Store) *MemoryPlugin {
 	return &MemoryPlugin{store: store}
 }
@@ -273,6 +293,7 @@ func (p *MemoryPlugin) Shutdown() error                  { return nil }
 func (p *MemoryPlugin) Commands() []plugin.Command       { return nil }
 func (p *MemoryPlugin) EventHandlers() []plugin.EventSub { return nil }
 
+// Init 注册全部记忆工具
 func (p *MemoryPlugin) Init(ctx *plugin.Context) error {
 	p.registerReadMemory(ctx.Registry)
 	p.registerWriteMemory(ctx.Registry)
@@ -282,6 +303,7 @@ func (p *MemoryPlugin) Init(ctx *plugin.Context) error {
 	return nil
 }
 
+// registerReadMemory 注册 memory_read 工具
 func (p *MemoryPlugin) registerReadMemory(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "memory_read",
@@ -312,6 +334,7 @@ func (p *MemoryPlugin) registerReadMemory(r *agent.ToolRegistry) {
 	})
 }
 
+// registerWriteMemory 注册 memory_write 工具
 func (p *MemoryPlugin) registerWriteMemory(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "memory_write",
@@ -341,6 +364,7 @@ func (p *MemoryPlugin) registerWriteMemory(r *agent.ToolRegistry) {
 	})
 }
 
+// registerSearchMemory 注册 memory_search 工具
 func (p *MemoryPlugin) registerSearchMemory(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "memory_search",
@@ -368,6 +392,7 @@ func (p *MemoryPlugin) registerSearchMemory(r *agent.ToolRegistry) {
 	})
 }
 
+// registerListMemory 注册 memory_list 工具
 func (p *MemoryPlugin) registerListMemory(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "memory_list",
@@ -388,6 +413,7 @@ func (p *MemoryPlugin) registerListMemory(r *agent.ToolRegistry) {
 	})
 }
 
+// registerDeleteMemory 注册 memory_delete 工具
 func (p *MemoryPlugin) registerDeleteMemory(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "memory_delete",

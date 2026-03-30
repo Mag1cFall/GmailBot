@@ -1,3 +1,4 @@
+// 配置加载，从 .env 文件和环境变量读取
 package config
 
 import (
@@ -13,6 +14,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// AIProviderConfig AI 服务商配置
 type AIProviderConfig struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
@@ -21,6 +23,7 @@ type AIProviderConfig struct {
 	Model   string `json:"model"`
 }
 
+// Config 全局配置
 type Config struct {
 	BotToken               string
 	GoogleClientID         string
@@ -48,11 +51,13 @@ type Config struct {
 	DashboardAuth          string
 }
 
+// Load 从 .env 加载配置
 func Load() Config {
 	envPath, _ := filepath.Abs(".env")
 	return loadFromPath(envPath)
 }
 
+// loadFromPath 从指定路径加载 .env 并构建 Config，缺失时读环境变量
 func loadFromPath(envPath string) Config {
 	if err := godotenv.Overload(envPath); err != nil {
 		if os.IsNotExist(err) {
@@ -103,6 +108,7 @@ func loadFromPath(envPath string) Config {
 	return cfg
 }
 
+// mustGet 读取必填环境变量，为空则打日志并退出进程
 func mustGet(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
@@ -112,6 +118,7 @@ func mustGet(key string) string {
 	return v
 }
 
+// getOrDefault 读取环境变量，未设置时返回默认值
 func getOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -119,6 +126,7 @@ func getOrDefault(key, def string) string {
 	return def
 }
 
+// getIntOrDefault 读取整型环境变量，解析失败时返回默认值
 func getIntOrDefault(key string, def int) int {
 	raw := os.Getenv(key)
 	if raw == "" {
@@ -132,6 +140,7 @@ func getIntOrDefault(key string, def int) int {
 	return v
 }
 
+// getBoolOrDefault 读取布尔型环境变量，支持 1/true/yes/on 等写法
 func getBoolOrDefault(key string, def bool) bool {
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	if raw == "" {
@@ -148,6 +157,7 @@ func getBoolOrDefault(key string, def bool) bool {
 	}
 }
 
+// String 返回配置摘要，用于日志输出，不含敏感字段
 func (c Config) String() string {
 	return fmt.Sprintf(
 		"db=%s ai_model=%s oauth_redirect=%s provider=%s fallbacks=%d",
@@ -159,6 +169,7 @@ func (c Config) String() string {
 	)
 }
 
+// EditableKeys 允许通过 Dashboard 修改的配置项
 var EditableKeys = []string{
 	"AI_MODEL",
 	"AI_BASE_URL",
@@ -177,6 +188,7 @@ var EditableKeys = []string{
 	"DASHBOARD_AUTH",
 }
 
+// UpdateEnvFile 更新 .env 文件中的配置项
 func UpdateEnvFile(key, value string) error {
 	data, err := os.ReadFile(".env")
 	if err != nil {
@@ -203,6 +215,7 @@ func UpdateEnvFile(key, value string) error {
 	return os.WriteFile(".env", []byte(strings.Join(lines, "\n")), 0644)
 }
 
+// PrimaryProvider 返回主 AI 服务商配置
 func (c Config) PrimaryProvider() AIProviderConfig {
 	providerType := strings.TrimSpace(c.AIProviderType)
 	if providerType == "" {
@@ -217,6 +230,7 @@ func (c Config) PrimaryProvider() AIProviderConfig {
 	}
 }
 
+// Providers 返回所有 AI 服务商配置（主 + fallback）
 func (c Config) Providers() []AIProviderConfig {
 	providers := []AIProviderConfig{c.PrimaryProvider()}
 	for _, item := range c.AIFallbackProviders {
@@ -229,6 +243,7 @@ func (c Config) Providers() []AIProviderConfig {
 	return providers
 }
 
+// normalizeProviderConfig 去除空白并补全缺省 type
 func normalizeProviderConfig(item AIProviderConfig) AIProviderConfig {
 	item.Name = strings.TrimSpace(item.Name)
 	item.Type = strings.TrimSpace(item.Type)
@@ -241,6 +256,7 @@ func normalizeProviderConfig(item AIProviderConfig) AIProviderConfig {
 	return item
 }
 
+// parseProviderConfigs 解析 AI_FALLBACK_PROVIDERS JSON 字符串
 func parseProviderConfigs(raw string) []AIProviderConfig {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

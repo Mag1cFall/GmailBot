@@ -1,3 +1,4 @@
+// 插件系统框架
 package plugin
 
 import (
@@ -6,23 +7,27 @@ import (
 	"gmailbot/internal/event"
 )
 
+// Context 插件初始化上下文
 type Context struct {
 	Registry *agent.ToolRegistry
 	Bus      *event.Bus
 	Extra    map[string]any
 }
 
+// Command 插件注册的命令
 type Command struct {
 	Name        string
 	Description string
 	Handler     func(ctx context.Context, args []string) (string, error)
 }
 
+// EventSub 插件事件订阅
 type EventSub struct {
 	EventType string
 	Handler   event.Handler
 }
 
+// Plugin 插件接口
 type Plugin interface {
 	Name() string
 	Description() string
@@ -32,6 +37,7 @@ type Plugin interface {
 	EventHandlers() []EventSub
 }
 
+// Info 插件信息
 type Info struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -39,12 +45,14 @@ type Info struct {
 	ToolCount   int    `json:"tool_count"`
 }
 
+// managedPlugin 内部包装，记录插件状态和注册的工具名
 type managedPlugin struct {
 	plugin    Plugin
 	active    bool
 	toolNames []string
 }
 
+// Manager 插件管理器
 type Manager struct {
 	plugins  []managedPlugin
 	registry *agent.ToolRegistry
@@ -52,6 +60,7 @@ type Manager struct {
 	extra    map[string]any
 }
 
+// NewManager 创建插件管理器
 func NewManager(registry *agent.ToolRegistry, bus *event.Bus, extra map[string]any) *Manager {
 	return &Manager{
 		registry: registry,
@@ -60,6 +69,7 @@ func NewManager(registry *agent.ToolRegistry, bus *event.Bus, extra map[string]a
 	}
 }
 
+// Register 初始化插件并记录其注册的工具
 func (m *Manager) Register(p Plugin) error {
 	before := map[string]struct{}{}
 	for _, tool := range m.registry.AllTools() {
@@ -88,12 +98,14 @@ func (m *Manager) Register(p Plugin) error {
 	return nil
 }
 
+// Shutdown 按注册倒序优雅关闭所有插件
 func (m *Manager) Shutdown() {
 	for i := len(m.plugins) - 1; i >= 0; i-- {
 		_ = m.plugins[i].plugin.Shutdown()
 	}
 }
 
+// List 返回所有插件名称
 func (m *Manager) List() []string {
 	names := make([]string, len(m.plugins))
 	for i, entry := range m.plugins {
@@ -102,6 +114,7 @@ func (m *Manager) List() []string {
 	return names
 }
 
+// Commands 返回所有已启用插件的命令
 func (m *Manager) Commands() []Command {
 	var commands []Command
 	for _, entry := range m.plugins {
@@ -113,6 +126,7 @@ func (m *Manager) Commands() []Command {
 	return commands
 }
 
+// Info 返回所有插件的运行信息
 func (m *Manager) Info() []Info {
 	infos := make([]Info, 0, len(m.plugins))
 	for _, entry := range m.plugins {
@@ -126,6 +140,7 @@ func (m *Manager) Info() []Info {
 	return infos
 }
 
+// SetActive 启用或禁用插件及其工具
 func (m *Manager) SetActive(name string, active bool) bool {
 	for i := range m.plugins {
 		if m.plugins[i].plugin.Name() != name {

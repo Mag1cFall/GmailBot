@@ -1,3 +1,4 @@
+// 程序入口，初始化各组件并启动 Telegram Bot
 package main
 
 import (
@@ -31,6 +32,7 @@ import (
 
 func main() {
 	logging.Init()
+	// 监听 SIGINT/SIGTERM，优雅关闭
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -41,6 +43,7 @@ func main() {
 	}
 	defer st.Close()
 
+	// 事件总线、工具注册表、Gmail 服务
 	bus := event.NewBus()
 	registry := agentpkg.NewToolRegistry()
 	gmailService := gmail.NewService(cfg, st)
@@ -64,9 +67,11 @@ func main() {
 	}
 	defer pluginMgr.Shutdown()
 
+	// 初始化 AI Agent 与人设管理器
 	agent := agentpkg.NewAgent(cfg, registry, st)
 	personaMgr := persona.NewManager(st, cfg.DefaultPersona)
 	agent.SetPersonaManager(personaMgr)
+	// 注册子 Agent：邮件撰写、邮件搜索
 	orchestrator := agentpkg.NewSubAgentOrchestrator(registry, agent.ProviderManager(), cfg.AIToolMaxSteps)
 	orchestrator.RegisterAgent(&agentpkg.SubAgent{
 		Name:         "email_writer",
@@ -102,6 +107,7 @@ func main() {
 	if err != nil {
 		fatal("init telegram adapter failed", "error", err)
 	}
+	// 订阅提醒到期事件，发送 Telegram 通知并标记已发
 	bus.Subscribe("reminder.due", func(ctx context.Context, evt event.Event) {
 		content, _ := evt.Payload["content"].(string)
 		reminderID, _ := evt.Payload["id"].(string)
@@ -129,6 +135,7 @@ func main() {
 		defer dashboardServer.Stop(context.Background())
 	}
 
+	// 消息处理器：更新指标、发布事件、调用 App 处理
 	handler := func(ctx context.Context, msg platform.UnifiedMessage) (platform.UnifiedResponse, error) {
 		metrics.Default.MessagesTotal.Add(1)
 		metrics.Default.MarkActiveUser(msg.Platform + ":" + msg.UserID)
@@ -186,6 +193,7 @@ func main() {
 	}
 }
 
+// fatal 打印错误日志并退出
 func fatal(message string, args ...any) {
 	slog.Error(message, args...)
 	os.Exit(1)
