@@ -119,7 +119,7 @@ func main() {
 	adapters := []platform.Adapter{telegramAdapter}
 	adapterByName := map[string]platform.Adapter{telegramAdapter.Name(): telegramAdapter}
 	if strings.TrimSpace(cfg.WebUIAddr) != "" {
-		adapter := webuiplatform.NewAdapter(cfg.WebUIAddr, st, cfg.DashboardAuth)
+		adapter := webuiplatform.NewAdapter(cfg.WebUIAddr, st, cfg.DashboardAuth, app)
 		adapters = append(adapters, adapter)
 		adapterByName[adapter.Name()] = adapter
 		slog.Info("webui adapter registered", "addr", cfg.WebUIAddr)

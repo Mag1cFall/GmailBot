@@ -13,6 +13,7 @@ import (
 
 	baseplatform "gmailbot/internal/platform"
 	"gmailbot/internal/store"
+	"gmailbot/internal/tgbot"
 )
 
 type requestPayload struct {
@@ -21,8 +22,16 @@ type requestPayload struct {
 }
 
 type responsePayload struct {
-	Response baseplatform.UnifiedResponse `json:"response"`
-	Error    string                       `json:"error,omitempty"`
+	Response     baseplatform.UnifiedResponse `json:"response"`
+	Error        string                       `json:"error,omitempty"`
+	DraftPreview *draftPreview                `json:"draft_preview,omitempty"`
+}
+
+type draftPreview struct {
+	To      string `json:"to"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+	Type    string `json:"type"`
 }
 
 type inMessage struct {
@@ -33,6 +42,7 @@ type inMessage struct {
 type Adapter struct {
 	addr      string
 	store     *store.Store
+	app       *tgbot.App
 	authToken string
 	server    *http.Server
 	handler   baseplatform.MessageHandler
@@ -42,10 +52,11 @@ type Adapter struct {
 	cancel    context.CancelFunc
 }
 
-func NewAdapter(addr string, st *store.Store, authToken string) *Adapter {
+func NewAdapter(addr string, st *store.Store, authToken string, app *tgbot.App) *Adapter {
 	return &Adapter{
 		addr:      strings.TrimSpace(addr),
 		store:     st,
+		app:       app,
 		authToken: strings.TrimSpace(authToken),
 		msgChan:   make(chan inMessage, 32),
 	}
@@ -71,6 +82,7 @@ func (a *Adapter) Start(ctx context.Context, handler baseplatform.MessageHandler
 	mux.HandleFunc("/api/stream/", a.requireAuth(a.handleStream))
 	mux.HandleFunc("/api/history/", a.requireAuth(a.handleHistory))
 	mux.HandleFunc("/api/session/", a.requireAuth(a.handleSession))
+	mux.HandleFunc("/api/draft/", a.requireAuth(a.handleDraft))
 	a.server = &http.Server{Addr: a.addr, Handler: mux}
 	err := a.server.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
@@ -190,6 +202,12 @@ func (a *Adapter) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, result)
 		return
 	}
+	if a.app != nil && a.app.HasPendingDraftByIdentity(r.Context(), a.Name(), payload.UserID) {
+		result.Response.Actions = tgbot.DraftActions()
+		if draft := a.app.GetPendingDraftByIdentity(r.Context(), a.Name(), payload.UserID); draft != nil {
+			result.DraftPreview = &draftPreview{To: draft.To, Subject: draft.Subject, Body: draft.Body, Type: string(draft.Type)}
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -264,6 +282,37 @@ func (a *Adapter) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (a *Adapter) handleDraft(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/draft/"))
+	if userID == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	action := strings.TrimPrefix(strings.TrimSpace(payload.Action), "draft_")
+	if a.app == nil {
+		http.Error(w, "app not initialized", http.StatusInternalServerError)
+		return
+	}
+	slog.Info("webui draft action", "user", userID, "action", action)
+	resp, err := a.app.HandleDraftActionByIdentity(r.Context(), a.Name(), userID, action)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, responsePayload{Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, responsePayload{Response: resp})
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -325,6 +374,17 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);height:100vh
 .send-btn{padding:10px 20px;background:var(--accent);color:#0d1117;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0}
 .send-btn:hover{filter:brightness(1.1)}
 .send-btn:disabled{opacity:.4;cursor:not-allowed}
+.actions{display:flex;gap:8px;padding:4px 0;flex-wrap:wrap}
+.action-btn{padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text);transition:all .15s}
+.action-btn:hover{background:rgba(56,189,248,.12);border-color:var(--accent)}
+.action-btn.confirm{background:rgba(63,185,80,.15);border-color:rgba(63,185,80,.4);color:var(--green)}
+.action-btn.confirm:hover{background:rgba(63,185,80,.25)}
+.action-btn.cancel{background:rgba(248,81,73,.1);border-color:rgba(248,81,73,.3);color:var(--red)}
+.action-btn.cancel:hover{background:rgba(248,81,73,.2)}
+.draft-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.6;margin-bottom:6px;max-width:72%}
+.draft-card .draft-field{color:var(--muted);font-size:11px;margin-bottom:2px}
+.draft-card .draft-value{color:var(--text);margin-bottom:8px}
+.draft-card .draft-body{white-space:pre-wrap;border-top:1px solid var(--border);padding-top:8px;margin-top:4px}
 </style>
 </head>
 <body>
@@ -413,7 +473,7 @@ function conn(){
   es.onopen=function(){dot2('on','已连接');};
   es.onerror=function(){dot2('err','连接中断');};
   es.onmessage=function(e){
-    try{var p=JSON.parse(e.data);hideThink();bubble('assistant',p.text||p.Text||'');dot2('on','已收到回复');}catch(ex){}
+    try{var p=JSON.parse(e.data);hideThink();bubble('assistant',p.text||p.Text||'');renderActions(p.actions);dot2('on','已收到回复');}catch(ex){}
     busy=false;btn.disabled=false;
   };
   loadHistory();
@@ -423,7 +483,7 @@ function send(){
   var u=uid.value.trim(),t=inp.value.trim();if(!u||!t||busy)return;
   busy=true;btn.disabled=true;bubble('user',t);inp.value='';inp.style.height='';showThink();dot2('on','发送中…');
   authFetch('/api/chat',{method:'POST',body:JSON.stringify({user_id:u,text:t})})
-  .then(function(r){return r.json().then(function(p){if(!r.ok){hideThink();dot2('err',p.error||'失败');busy=false;btn.disabled=false;}});})
+  .then(function(r){return r.json().then(function(p){if(!r.ok){hideThink();dot2('err',p.error||'失败');busy=false;btn.disabled=false;}else if(p.response&&p.response.actions){renderActions(p.response.actions,p.draft_preview);}});})
   .catch(function(e){hideThink();dot2('err',e.message);busy=false;btn.disabled=false;});
 }
 
@@ -435,6 +495,39 @@ document.getElementById('clear').addEventListener('click',function(){
 });
 inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 inp.addEventListener('input',function(){inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,160)+'px';});
+
+function renderActions(actions,draft){
+  if(!actions||!actions.length)return;
+  var row=document.createElement('div');row.className='bubble-row assistant';
+  if(draft){
+    var card=document.createElement('div');card.className='draft-card';
+    var html='<div class="draft-field">\u6536\u4ef6\u4eba</div><div class="draft-value">'+esc(draft.to)+'</div>';
+    if(draft.subject)html+='<div class="draft-field">\u4e3b\u9898</div><div class="draft-value">'+esc(draft.subject)+'</div>';
+    if(draft.body)html+='<div class="draft-field">\u6b63\u6587</div><div class="draft-body">'+esc(draft.body)+'</div>';
+    card.innerHTML=html;
+    row.appendChild(card);
+  }
+  var actDiv=document.createElement('div');actDiv.className='actions';
+  actions.forEach(function(a){
+    var b=document.createElement('button');b.className='action-btn';
+    if(a.action.indexOf('confirm')>=0)b.className+=' confirm';
+    if(a.action.indexOf('cancel')>=0)b.className+=' cancel';
+    b.textContent=a.label;
+    b.addEventListener('click',function(){
+      row.remove();
+      var u=uid.value.trim();if(!u)return;
+      bubble('user',a.label);
+      authFetch('/api/draft/'+encodeURIComponent(u),{method:'POST',body:JSON.stringify({action:a.action})})
+      .then(function(r){return r.json();})
+      .then(function(p){if(p.response)bubble('assistant',p.response.text||'');dot2('on','\u64cd\u4f5c\u5b8c\u6210');})
+      .catch(function(e){dot2('err',e.message);});
+    });
+    actDiv.appendChild(b);
+  });
+  row.appendChild(actDiv);msgs.appendChild(row);msgs.scrollTop=msgs.scrollHeight;
+}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
 if(tkn.value.trim())conn();
 </script>
 </body>

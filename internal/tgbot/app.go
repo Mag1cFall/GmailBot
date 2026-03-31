@@ -141,7 +141,6 @@ func (a *App) Commands() []platform.Command {
 }
 
 // HandleSendDraftAction 处理发邮件草稿的用户操作：confirm/cancel/edit
-// action: "confirm" 真正发送；"cancel" 取消；"edit" 提示用户输入修改内容
 func (a *App) HandleSendDraftAction(ctx context.Context, tgUserID int64, action string) (platform.UnifiedResponse, error) {
 	if a.pendingDraft == nil {
 		return platform.UnifiedResponse{Text: "草稿系统未初始化"}, nil
@@ -175,6 +174,45 @@ func (a *App) HasPendingDraft(tgUserID int64) bool {
 	}
 	_, ok := a.pendingDraft.Get(tgUserID)
 	return ok
+}
+
+func (a *App) HandleDraftActionByIdentity(ctx context.Context, platformName, userID, action string) (platform.UnifiedResponse, error) {
+	userKey, err := a.store.ResolvePlatformUserKey(ctx, platformName, userID)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "用户解析失败：" + err.Error()}, nil
+	}
+	return a.HandleSendDraftAction(ctx, userKey, action)
+}
+
+func (a *App) HasPendingDraftByIdentity(ctx context.Context, platformName, userID string) bool {
+	userKey, err := a.store.ResolvePlatformUserKey(ctx, platformName, userID)
+	if err != nil {
+		return false
+	}
+	return a.HasPendingDraft(userKey)
+}
+
+func (a *App) GetPendingDraftByIdentity(ctx context.Context, platformName, userID string) *gmail.PendingDraft {
+	if a.pendingDraft == nil {
+		return nil
+	}
+	userKey, err := a.store.ResolvePlatformUserKey(ctx, platformName, userID)
+	if err != nil {
+		return nil
+	}
+	draft, ok := a.pendingDraft.Get(userKey)
+	if !ok {
+		return nil
+	}
+	return draft
+}
+
+func DraftActions() []platform.Action {
+	return []platform.Action{
+		{Label: "✅ 确认发送", Action: "draft_confirm"},
+		{Label: "✏️ 修改", Action: "draft_edit"},
+		{Label: "❌ 取消", Action: "draft_cancel"},
+	}
 }
 
 // Reload 更新配置并重建管线

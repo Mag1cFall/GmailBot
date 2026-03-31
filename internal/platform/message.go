@@ -16,6 +16,12 @@ type UnifiedResponse struct {
 	Text        string       `json:"text"`
 	Markdown    bool         `json:"markdown,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	Actions     []Action     `json:"actions,omitempty"`
+}
+
+type Action struct {
+	Label  string `json:"label"`
+	Action string `json:"action"`
 }
 
 // Attachment 附件
