@@ -8,7 +8,8 @@ document.getElementById('save-auth').addEventListener('click', () => {
 });
 
 document.getElementById('webui-link').addEventListener('click', () => {
-  window.open(`http://${location.hostname}:29112`, '_blank');
+  const p = parseInt(location.port || (location.protocol === 'https:' ? 443 : 80));
+  window.open(`${location.protocol}//${location.hostname}:${p + 1}`, '_blank');
 });
 
 // ─── Nav ────────────────────────────────────────────────────────────────
