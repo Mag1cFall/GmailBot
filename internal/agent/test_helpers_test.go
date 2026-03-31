@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"gmailbot/internal/store"
+	"gmailbot/internal/testutil"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -23,6 +23,7 @@ type scriptedProvider struct {
 	results  []scriptedResult
 	requests []ChatRequest
 	index    int
+	window   int
 }
 
 func newScriptedProvider(name string, results ...scriptedResult) *scriptedProvider {
@@ -46,6 +47,13 @@ func (p *scriptedProvider) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 	result := p.results[p.index]
 	p.index++
 	return result.response, result.err
+}
+
+func (p *scriptedProvider) FetchContextWindow(ctx context.Context, model string) (int, error) {
+	if p.window > 0 {
+		return p.window, nil
+	}
+	return 0, errors.New("context window unavailable")
 }
 
 func (p *scriptedProvider) Requests() []ChatRequest {
@@ -80,12 +88,5 @@ func cloneChatRequest(req ChatRequest) ChatRequest {
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Init(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = st.Close()
-	})
-	return st
+	return testutil.NewTestStore(t)
 }

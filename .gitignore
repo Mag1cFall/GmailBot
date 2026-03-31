@@ -6,3 +6,6 @@ client_secret_*.json
 gmailbot
 *.log
 /ref
+logs/
+bin/
+tmpqa/

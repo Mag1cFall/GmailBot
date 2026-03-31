@@ -2,10 +2,10 @@ package persona
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"gmailbot/internal/store"
+	"gmailbot/internal/testutil"
 )
 
 func TestManagerResolvesDefaultAndSessionPersona(t *testing.T) {
@@ -48,10 +48,5 @@ func TestManagerResolvesDefaultAndSessionPersona(t *testing.T) {
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Init(filepath.Join(t.TempDir(), "persona.db"))
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	return st
+	return testutil.NewTestStore(t)
 }

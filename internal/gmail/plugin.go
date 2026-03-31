@@ -12,11 +12,12 @@ import (
 // GmailPlugin Gmail 能力插件
 type GmailPlugin struct {
 	service *Service
+	pending *PendingStore
 }
 
 // NewPlugin 创建 Gmail 插件
-func NewPlugin(service *Service) *GmailPlugin {
-	return &GmailPlugin{service: service}
+func NewPlugin(service *Service, pending *PendingStore) *GmailPlugin {
+	return &GmailPlugin{service: service, pending: pending}
 }
 
 func (p *GmailPlugin) Name() string                     { return "gmail" }
@@ -161,7 +162,7 @@ func (p *GmailPlugin) registerSummarizeEmails(r *agent.ToolRegistry) {
 func (p *GmailPlugin) registerSendEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "send_email",
-		Description: "发送一封新邮件",
+		Description: "发送一封新邮件（调用后不会立即发送，系统会暂存草稿并显示确认按钮，用户点击确认后才真正发送）。当用户要求发邮件时直接调用此工具，无需先用文本展示草稿",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -178,11 +179,20 @@ func (p *GmailPlugin) registerSendEmail(r *agent.ToolRegistry) {
 				Body    string `json:"body"`
 			}
 			json.Unmarshal(raw, &req)
-			id, err := p.service.SendEmail(context.Background(), tc.TgUserID, req.To, req.Subject, req.Body)
-			if err != nil {
-				return "", err
-			}
-			return agent.ToJSON(map[string]any{"sent_id": id, "status": "sent"})
+			p.pending.Set(&PendingDraft{
+				Type:     DraftSend,
+				TgUserID: tc.TgUserID,
+				To:       req.To,
+				Subject:  req.Subject,
+				Body:     req.Body,
+			})
+			return agent.ToJSON(map[string]any{
+				"status":  "pending_confirm",
+				"to":      req.To,
+				"subject": req.Subject,
+				"body":    req.Body,
+				"message": "草稿已准备好，请在 Telegram 点击【✅ 确认发送】按鈕完成发送，或【✏️ 修改】【❌ 取消】",
+			})
 		},
 		Active:   true,
 		Category: "gmail",
@@ -193,7 +203,7 @@ func (p *GmailPlugin) registerSendEmail(r *agent.ToolRegistry) {
 func (p *GmailPlugin) registerReplyEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "reply_email",
-		Description: "回复一封邮件",
+		Description: "回复一封邮件（调用后不会立即发送，系统会暂存草稿并显示确认按钮，用户确认后才真正发送）",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -208,11 +218,17 @@ func (p *GmailPlugin) registerReplyEmail(r *agent.ToolRegistry) {
 				Body string `json:"body"`
 			}
 			json.Unmarshal(raw, &req)
-			id, err := p.service.ReplyEmail(context.Background(), tc.TgUserID, req.ID, req.Body)
-			if err != nil {
-				return "", err
-			}
-			return agent.ToJSON(map[string]any{"reply_id": id, "status": "replied"})
+			p.pending.Set(&PendingDraft{
+				Type:      DraftReply,
+				TgUserID:  tc.TgUserID,
+				RefMailID: req.ID,
+				Body:      req.Body,
+			})
+			return agent.ToJSON(map[string]any{
+				"status":  "pending_confirm",
+				"body":    req.Body,
+				"message": "回复草稿已准备，请在 Telegram 点击【✅ 确认发送】按鈕",
+			})
 		},
 		Active:   true,
 		Category: "gmail",
@@ -223,7 +239,7 @@ func (p *GmailPlugin) registerReplyEmail(r *agent.ToolRegistry) {
 func (p *GmailPlugin) registerForwardEmail(r *agent.ToolRegistry) {
 	r.Register(&agent.ToolDef{
 		Name:        "forward_email",
-		Description: "转发一封邮件给指定收件人",
+		Description: "转发一封邮件给指定收件人（调用后不会立即发送，系统会暂存草稿并显示确认按钮，用户确认后才真正发送）",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{
@@ -238,11 +254,17 @@ func (p *GmailPlugin) registerForwardEmail(r *agent.ToolRegistry) {
 				To string `json:"to"`
 			}
 			json.Unmarshal(raw, &req)
-			id, err := p.service.ForwardEmail(context.Background(), tc.TgUserID, req.ID, req.To)
-			if err != nil {
-				return "", err
-			}
-			return agent.ToJSON(map[string]any{"forward_id": id, "status": "forwarded"})
+			p.pending.Set(&PendingDraft{
+				Type:      DraftForward,
+				TgUserID:  tc.TgUserID,
+				RefMailID: req.ID,
+				To:        req.To,
+			})
+			return agent.ToJSON(map[string]any{
+				"status":  "pending_confirm",
+				"to":      req.To,
+				"message": "转发草稿已准备，请在 Telegram 点击【✅ 确认发送】按鈕",
+			})
 		},
 		Active:   true,
 		Category: "gmail",

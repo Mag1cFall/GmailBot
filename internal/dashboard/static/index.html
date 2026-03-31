@@ -3,64 +3,166 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GmailBot Dashboard</title>
+  <title>GmailBot — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand">小 AstrBot</div>
-      <button type="button" data-view="overview" class="nav active">概览</button>
-      <button type="button" data-view="plugins" class="nav">插件</button>
-      <button type="button" data-view="tools" class="nav">工具</button>
-      <button type="button" data-view="sessions" class="nav">会话</button>
-      <button type="button" data-view="config" class="nav">配置</button>
-      <button type="button" data-view="providers" class="nav">模型</button>
-      <button type="button" data-view="logs" class="nav">日志</button>
-      <div class="auth-box">
-        <input id="auth" type="password" placeholder="Dashboard 密码">
-        <button type="button" id="save-auth">保存</button>
+  <div class="shell">
+    <nav class="rail">
+      <div class="rail-brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <span>GmailBot</span>
       </div>
-    </aside>
-    <main class="content">
-      <section id="overview" class="view active">
-        <div class="cards">
-          <div class="card"><div class="label">运行时长</div><div id="uptime" class="value">-</div></div>
-          <div class="card"><div class="label">消息数</div><div id="messages" class="value">-</div></div>
-          <div class="card"><div class="label">活跃用户</div><div id="users" class="value">-</div></div>
-          <div class="card"><div class="label">工具调用</div><div id="tool-calls" class="value">-</div></div>
+      <button class="rail-item active" data-view="overview">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        概览
+      </button>
+      <button class="rail-item" data-view="plugins">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        插件
+      </button>
+      <button class="rail-item" data-view="tools">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        工具
+      </button>
+      <button class="rail-item" data-view="sessions">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        会话
+      </button>
+      <button class="rail-item" data-view="config">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        配置
+      </button>
+      <button class="rail-item" data-view="providers">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        模型
+      </button>
+      <button class="rail-item" data-view="logs">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="12" y2="18"/></svg>
+        日志
+      </button>
+      <div class="rail-bottom">
+        <div class="auth-row">
+          <input id="auth" type="password" placeholder="Dashboard 密码" autocomplete="off">
+          <button id="save-auth">确认</button>
         </div>
-        <div class="panel">
-          <h2>系统状态</h2>
-          <pre id="status-json"></pre>
+        <button id="webui-link" class="webui-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          WebUI 对话
+        </button>
+      </div>
+    </nav>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="status-line">
+          <span class="dot" id="online-dot"></span>
+          <span id="system-status-text">连接中…</span>
         </div>
-      </section>
-      <section id="plugins" class="view">
-        <div class="panel"><h2>插件</h2><div id="plugin-list" class="list"></div></div>
-      </section>
-      <section id="tools" class="view">
-        <div class="panel"><h2>工具</h2><div id="tool-list" class="list"></div></div>
-      </section>
-      <section id="sessions" class="view">
-        <div class="panel">
-          <h2>会话</h2>
-          <div class="toolbar">
-            <input id="session-uid" placeholder="Telegram 用户 ID">
-            <button type="button" id="load-sessions">加载</button>
+        <div class="topbar-right">
+          <label class="switch-label">
+            <input type="checkbox" id="auto-refresh" checked>
+            <span class="switch-track"></span>
+            <span>自动刷新</span>
+          </label>
+        </div>
+      </header>
+
+      <div id="toast" class="toast" style="display:none"></div>
+
+      <main class="content">
+        <!-- 概览 -->
+        <section id="overview" class="view active">
+          <div class="metrics-row">
+            <div class="metric"><div class="metric-val" id="uptime">—</div><div class="metric-lbl">运行时长</div></div>
+            <div class="metric"><div class="metric-val" id="messages">—</div><div class="metric-lbl">消息总数</div></div>
+            <div class="metric"><div class="metric-val" id="users">—</div><div class="metric-lbl">活跃用户</div></div>
+            <div class="metric"><div class="metric-val" id="tool-calls">—</div><div class="metric-lbl">工具调用</div></div>
           </div>
-          <pre id="session-list"></pre>
-        </div>
-      </section>
-      <section id="config" class="view">
-        <div class="panel"><h2>配置</h2><div id="config-list" class="list"></div></div>
-      </section>
-      <section id="providers" class="view">
-        <div class="panel"><h2>模型提供方</h2><pre id="provider-list"></pre></div>
-      </section>
-      <section id="logs" class="view">
-        <div class="panel"><h2>日志</h2><pre id="log-list"></pre></div>
-      </section>
-    </main>
+          <div class="section-title">系统状态</div>
+          <pre id="status-json" class="code-block"></pre>
+        </section>
+
+        <!-- 插件 -->
+        <section id="plugins" class="view">
+          <div class="section-title">插件管理</div>
+          <table class="data-table" id="plugin-table">
+            <thead><tr><th>名称</th><th>描述</th><th>工具数</th><th style="width:90px;text-align:right">状态</th></tr></thead>
+            <tbody id="plugin-list"></tbody>
+          </table>
+        </section>
+
+        <!-- 工具 -->
+        <section id="tools" class="view">
+          <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>工具管理</span>
+            <select id="tool-plugin-filter" class="inline-select">
+              <option value="all">全部插件</option>
+            </select>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>工具名</th><th>描述</th><th>分类</th><th style="width:90px;text-align:right">状态</th></tr></thead>
+            <tbody id="tool-list"></tbody>
+          </table>
+        </section>
+
+        <!-- 会话 -->
+        <section id="sessions" class="view">
+          <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>用户会话</span>
+            <div style="display:flex;gap:8px">
+              <input id="session-uid" class="inline-input" placeholder="UID 筛选">
+              <button id="load-sessions" class="btn-sm">查询</button>
+              <button id="back-sessions" class="btn-sm" style="display:none">← 返回</button>
+            </div>
+          </div>
+          <table class="data-table" id="session-table">
+            <thead><tr><th>平台</th><th>用户 ID</th><th>消息数</th><th>Token 估算</th><th>最后活跃</th><th style="width:80px;text-align:right">操作</th></tr></thead>
+            <tbody id="session-list"></tbody>
+          </table>
+          <div id="session-detail" style="display:none">
+            <div class="section-title" style="margin-top:24px">会话消息</div>
+            <div id="session-messages"></div>
+          </div>
+        </section>
+
+        <!-- 配置 -->
+        <section id="config" class="view">
+          <div class="section-title">系统配置</div>
+          <table class="data-table config-table">
+            <thead><tr><th style="width:260px">配置项</th><th>当前值</th><th style="width:70px;text-align:right">操作</th></tr></thead>
+            <tbody id="config-list"></tbody>
+          </table>
+        </section>
+
+        <!-- 模型 -->
+        <section id="providers" class="view">
+          <div class="section-title">模型提供方</div>
+          <table class="data-table">
+            <thead><tr><th>名称</th><th>类型</th><th>模型</th><th>角色</th></tr></thead>
+            <tbody id="provider-list"></tbody>
+          </table>
+        </section>
+
+        <!-- 日志 -->
+        <section id="logs" class="view log-view">
+          <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+            <span>实时日志</span>
+            <select id="log-level-filter" class="inline-select">
+              <option value="all">全部</option>
+              <option value="INFO">INFO</option>
+              <option value="WARN">WARN</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+          </div>
+          <div class="log-container">
+            <pre id="log-list" class="log-pre"></pre>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
   <script src="/app.js"></script>
 </body>

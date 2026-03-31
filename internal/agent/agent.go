@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"gmailbot/config"
 	"gmailbot/internal/persona"
@@ -103,14 +105,12 @@ func (pb *PromptBuilder) BuildWithTools(tools []*ToolDef, overrides map[string]s
 		sb.WriteString(content)
 		sb.WriteString("\n\n")
 	}
-	if overrides != nil {
-		for label, content := range overrides {
-			if _, ok := seen[label]; ok || strings.TrimSpace(content) == "" {
-				continue
-			}
-			sb.WriteString(content)
-			sb.WriteString("\n\n")
+	for label, content := range overrides {
+		if _, ok := seen[label]; ok || strings.TrimSpace(content) == "" {
+			continue
 		}
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
 	}
 
 	if len(tools) > 0 {
@@ -132,6 +132,7 @@ type Agent struct {
 	registry      *ToolRegistry
 	store         *store.Store
 	promptBuilder *PromptBuilder
+	ctxMgr        *ContextManager
 	maxToolSteps  int
 	personaMgr    *persona.Manager
 }
@@ -148,18 +149,27 @@ func NewAgent(cfg config.Config, registry *ToolRegistry, st *store.Store) *Agent
 
 回复规范：
 - 简洁有力，列举时用编号或符号列表
-- 涉及金融/安全类邮件时附上简短风险提示`)
+- 涉及金融/安全类邮件时附上简短风险提示
+
+邮件操作说明：
+- 当用户要求发邮件/回复/转发时，直接调用对应工具（send_email/reply_email/forward_email）
+- 工具调用后不会立刻发出，系统会自动暂存草稿并在聊天界面显示【✅ 确认发送 / ✏️ 修改 / ❌ 取消】按钮
+- 用户点击确认后才会真正发送，你不需要额外文字确认环节
+- 你的回复中应简要告知用户草稿已准备好，请点击按钮操作`)
 
 	maxSteps := cfg.AIToolMaxSteps
 	if maxSteps <= 0 {
 		maxSteps = 6
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	return &Agent{
 		providerMgr:   pm,
 		registry:      registry,
 		store:         st,
 		promptBuilder: pb,
+		ctxMgr:        NewContextManager(ctx, cfg, pm),
 		maxToolSteps:  maxSteps,
 	}
 }
@@ -179,6 +189,13 @@ func (a *Agent) ProviderManager() *ProviderManager {
 	return a.providerMgr
 }
 
+// ContextManager 返回上下文管理器
+func (a *Agent) ContextManager() *ContextManager {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.ctxMgr
+}
+
 // SetPersonaManager 注入人设管理器
 func (a *Agent) SetPersonaManager(manager *persona.Manager) {
 	a.personaMgr = manager
@@ -189,6 +206,9 @@ func (a *Agent) Reload(cfg config.Config) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.providerMgr.LoadFromConfig(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a.ctxMgr = NewContextManager(ctx, cfg, a.providerMgr)
 	if cfg.AIToolMaxSteps > 0 {
 		a.maxToolSteps = cfg.AIToolMaxSteps
 	}
@@ -228,11 +248,13 @@ func (a *Agent) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) 
 
 	session, err := a.store.GetOrCreateActiveSessionByIdentity(ctx, msg.Platform, msg.UserID)
 	if err != nil {
+		slog.Error("session resolve failed", "platform", msg.Platform, "user", msg.UserID, "error", err)
 		return platform.UnifiedResponse{}, err
 	}
 	if msg.SessionID == "" {
 		msg.SessionID = session.ID
 	}
+	slog.Debug("session resolved", "session", session.ID, "history_len", len(session.Messages))
 
 	selectedPersona := persona.Persona{}
 	if a.personaMgr != nil {
@@ -251,21 +273,20 @@ func (a *Agent) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) 
 		Role:    openai.ChatMessageRoleSystem,
 		Content: a.promptBuilder.BuildWithTools(selectedTools, overrides),
 	})
-	for _, item := range session.Messages {
-		if item.Role != "user" && item.Role != "assistant" {
-			continue
-		}
-		messages = append(messages, ChatMessage{
-			Role:    item.Role,
-			Content: item.Content,
-		})
-	}
+	messages = append(messages, sessionMessagesToChatMessages(session.Messages)...)
 	messages = append(messages, ChatMessage{
 		Role:    openai.ChatMessageRoleUser,
 		Content: userText,
 	})
-
-	if _, err = a.store.AppendActiveSessionMessageByIdentity(ctx, msg.Platform, msg.UserID, "user", userText); err != nil {
+	processedMessages := messages
+	warned := false
+	if a.ContextManager() != nil {
+		processedMessages, warned, err = a.ContextManager().Process(ctx, messages)
+		if err != nil {
+			return platform.UnifiedResponse{}, err
+		}
+	}
+	if err = a.store.UpdateSessionMessages(ctx, session.ID, chatMessagesToSessionMessages(processedMessages)); err != nil {
 		return platform.UnifiedResponse{}, err
 	}
 
@@ -277,14 +298,56 @@ func (a *Agent) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) 
 		SessionID: msg.SessionID,
 		Extra:     map[string]any{},
 	}
-	reply, err := a.chatWithTools(ctx, toolCtx, messages, selectedTools, selectedPersona.Model)
+	slog.Info("agent processing", "platform", msg.Platform, "user", msg.UserID, "session", session.ID, "persona", selectedPersona.Name, "tools", len(selectedTools), "msgs", len(processedMessages))
+	reply, conversationMessages, err := a.chatWithTools(ctx, toolCtx, processedMessages, selectedTools, selectedPersona.Model)
 	if err != nil {
 		return platform.UnifiedResponse{}, err
 	}
-	if _, err = a.store.AppendActiveSessionMessageByIdentity(ctx, msg.Platform, msg.UserID, "assistant", reply); err != nil {
+	if warned {
+		tokens := a.ContextManager().EstimateTokens(processedMessages)
+		reply += formatContextWarning(tokens)
+	}
+	if err = a.store.UpdateSessionMessages(ctx, session.ID, chatMessagesToSessionMessages(conversationMessages)); err != nil {
 		return platform.UnifiedResponse{}, err
 	}
 	return platform.UnifiedResponse{Text: reply, Markdown: true}, nil
+}
+
+func (a *Agent) CompactSession(ctx context.Context, platformName, userID string) (int, int, error) {
+	if a.ContextManager() == nil {
+		return 0, 0, errors.New("context manager not initialized")
+	}
+	session, err := a.store.GetOrCreateActiveSessionByIdentity(ctx, platformName, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	selectedPersona := persona.Persona{}
+	if a.personaMgr != nil {
+		resolved, resolveErr := a.personaMgr.ActivePersona(ctx, platformName, userID)
+		if resolveErr == nil {
+			selectedPersona = resolved
+		}
+	}
+	selectedTools := a.registry.FilteredActiveTools(selectedPersona.Tools)
+	overrides := map[string]string{}
+	if strings.TrimSpace(selectedPersona.SystemPrompt) != "" {
+		overrides["identity"] = selectedPersona.SystemPrompt
+	}
+	messages := []ChatMessage{{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: a.promptBuilder.BuildWithTools(selectedTools, overrides),
+	}}
+	messages = append(messages, sessionMessagesToChatMessages(session.Messages)...)
+	before := a.ContextManager().EstimateTokens(messages)
+	compressed, err := a.ContextManager().LLMSummaryCompress(ctx, messages)
+	if err != nil {
+		return 0, 0, err
+	}
+	after := a.ContextManager().EstimateTokens(compressed)
+	if err := a.store.UpdateSessionMessages(ctx, session.ID, chatMessagesToSessionMessages(compressed)); err != nil {
+		return 0, 0, err
+	}
+	return before, after, nil
 }
 
 // GenerateDailyDigest 生成每日邮件摘要
@@ -385,7 +448,7 @@ func (a *Agent) JudgeEmailImportance(ctx context.Context, tgUserID int64, subjec
 }
 
 // chatWithTools 带工具调用的多轮对话循环
-func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, messages []ChatMessage, toolDefs []*ToolDef, model string) (string, error) {
+func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, messages []ChatMessage, toolDefs []*ToolDef, model string) (string, []ChatMessage, error) {
 	tools := OpenAIToolsFromDefs(toolDefs)
 	allowedTools := map[string]struct{}{}
 	for _, tool := range toolDefs {
@@ -401,13 +464,14 @@ func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, message
 	a.mu.RUnlock()
 
 	for i := 0; i < maxSteps; i++ {
+		slog.Info("agent llm call", "step", i+1, "max", maxSteps, "msgs", len(chatMessages))
 		resp, err := a.providerMgr.Chat(ctx, ChatRequest{
 			Messages: chatMessages,
 			Tools:    tools,
 			Model:    model,
 		})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 
 		if len(resp.ToolCalls) == 0 {
@@ -415,7 +479,12 @@ func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, message
 			if content == "" {
 				content = "我暂时无法生成有效回复，请稍后再试。"
 			}
-			return content, nil
+			slog.Info("agent reply", "step", i+1, "reply_len", len(content))
+			chatMessages = append(chatMessages, ChatMessage{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: content,
+			})
+			return content, chatMessages, nil
 		}
 
 		chatMessages = append(chatMessages, ChatMessage{
@@ -434,9 +503,13 @@ func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, message
 				})
 				continue
 			}
+			slog.Info("agent tool call", "step", i+1, "tool", call.Function.Name, "args_len", len(call.Function.Arguments))
 			result, toolErr := a.registry.Execute(toolCtx, call.Function.Name, call.Function.Arguments)
 			if toolErr != nil {
+				slog.Warn("agent tool error", "tool", call.Function.Name, "error", toolErr)
 				result = fmt.Sprintf(`{"error":%q}`, toolErr.Error())
+			} else {
+				slog.Info("agent tool ok", "tool", call.Function.Name, "result_len", len(result))
 			}
 			chatMessages = append(chatMessages, ChatMessage{
 				Role:       openai.ChatMessageRoleTool,
@@ -447,5 +520,12 @@ func (a *Agent) chatWithTools(ctx context.Context, toolCtx *ToolContext, message
 		}
 	}
 
-	return "已达到函数调用上限，请缩小问题范围后重试。", nil
+	slog.Warn("agent tool loop limit reached", "max_steps", maxSteps)
+	limitReply := "已达到函数调用上限，请缩小问题范围后重试。"
+	chatMessages = append(chatMessages, ChatMessage{Role: openai.ChatMessageRoleAssistant, Content: limitReply})
+	return limitReply, chatMessages, nil
+}
+
+func formatContextWarning(tokens int) string {
+	return fmt.Sprintf("\n\n> ⚠️ 对话历史较长（约 %.1f k tokens），建议使用 /compact 整理", float64(tokens)/1000)
 }

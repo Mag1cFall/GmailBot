@@ -40,10 +40,11 @@ type App struct {
 	router        *platform.CommandRouter
 	personaMgr    *persona.Manager
 	pendingConfig map[string]string
+	pendingDraft  *gmail.PendingStore
 }
 
 // NewApp 创建 Bot 应用并初始化命令路由和管线
-func NewApp(cfg config.Config, st *store.Store, gmailService *gmail.Service, agent *agentpkg.Agent, memStore *memory.Store) (*App, error) {
+func NewApp(cfg config.Config, st *store.Store, gmailService *gmail.Service, pending *gmail.PendingStore, agent *agentpkg.Agent, memStore *memory.Store) (*App, error) {
 	app := &App{
 		cfg:           cfg,
 		store:         st,
@@ -52,6 +53,7 @@ func NewApp(cfg config.Config, st *store.Store, gmailService *gmail.Service, age
 		memory:        memStore,
 		router:        platform.NewCommandRouter(),
 		pendingConfig: map[string]string{},
+		pendingDraft:  pending,
 	}
 	app.setupPipeline()
 	if err := app.registerHandlers(); err != nil {
@@ -65,6 +67,9 @@ func (a *App) setupPipeline() {
 	p := pipeline.New()
 	p.AddStage(&pipeline.AuthCheckStage{
 		CheckFunc: func(ctx context.Context, msg platform.UnifiedMessage) error {
+			if msg.Platform == "webui" {
+				return nil
+			}
 			authorized, err := a.store.IsUserAuthorizedByIdentity(ctx, msg.Platform, msg.UserID)
 			if err != nil {
 				return err
@@ -133,6 +138,43 @@ func (a *App) HandleMessage(ctx context.Context, msg platform.UnifiedMessage) (p
 // Commands 返回所有已注册命令
 func (a *App) Commands() []platform.Command {
 	return a.router.Commands()
+}
+
+// HandleSendDraftAction 处理发邮件草稿的用户操作：confirm/cancel/edit
+// action: "confirm" 真正发送；"cancel" 取消；"edit" 提示用户输入修改内容
+func (a *App) HandleSendDraftAction(ctx context.Context, tgUserID int64, action string) (platform.UnifiedResponse, error) {
+	if a.pendingDraft == nil {
+		return platform.UnifiedResponse{Text: "草稿系统未初始化"}, nil
+	}
+	switch action {
+	case "confirm":
+		id, err := a.pendingDraft.Confirm(ctx, a.gmail, tgUserID)
+		if err != nil {
+			return platform.UnifiedResponse{Text: "发送失败：" + err.Error()}, nil
+		}
+		return platform.UnifiedResponse{Text: fmt.Sprintf("✅ 邮件已发送（ID: %s）", id)}, nil
+	case "cancel":
+		a.pendingDraft.Pop(tgUserID)
+		return platform.UnifiedResponse{Text: "❌ 已取消发送"}, nil
+	case "edit":
+		draft, ok := a.pendingDraft.Get(tgUserID)
+		if !ok {
+			return platform.UnifiedResponse{Text: "没有待确认的草稿，请重新描述需求"}, nil
+		}
+		_ = draft
+		return platform.UnifiedResponse{Text: "✏️ 请告诉我需要修改什么（草稿仍保留，AI 将根据你的要求重写）"}, nil
+	default:
+		return platform.UnifiedResponse{Text: "未知操作"}, nil
+	}
+}
+
+// HasPendingDraft 检测该 Telegram 用户是否有等待确认的邮件草稿
+func (a *App) HasPendingDraft(tgUserID int64) bool {
+	if a.pendingDraft == nil {
+		return false
+	}
+	_, ok := a.pendingDraft.Get(tgUserID)
+	return ok
 }
 
 // Reload 更新配置并重建管线

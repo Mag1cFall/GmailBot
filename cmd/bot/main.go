@@ -3,11 +3,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"gmailbot/config"
 	agentpkg "gmailbot/internal/agent"
@@ -21,7 +23,10 @@ import (
 	"gmailbot/internal/metrics"
 	"gmailbot/internal/persona"
 	"gmailbot/internal/platform"
+	larkplatform "gmailbot/internal/platform/lark"
+	qqplatform "gmailbot/internal/platform/qq"
 	telegramplatform "gmailbot/internal/platform/telegram"
+	webuiplatform "gmailbot/internal/platform/webui"
 	"gmailbot/internal/plugin"
 	systemplugin "gmailbot/internal/plugins/system"
 	websearchplugin "gmailbot/internal/plugins/websearch"
@@ -37,18 +42,21 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
-	st, err := store.Init(cfg.DBPath)
+	slog.Info("config loaded", "ai_model", cfg.AIModel, "config", cfg.String())
+	st, err := store.Init(cfg.DBDSN)
 	if err != nil {
-		fatal("init sqlite failed", "error", err)
+		fatal("init mysql failed", "error", err)
 	}
 	defer st.Close()
+	slog.Info("database connected")
 
 	// 事件总线、工具注册表、Gmail 服务
 	bus := event.NewBus()
 	registry := agentpkg.NewToolRegistry()
 	gmailService := gmail.NewService(cfg, st)
+	gmailPending := gmail.NewPendingStore()
 	pluginMgr := plugin.NewManager(registry, bus, map[string]any{"store": st})
-	if err := pluginMgr.Register(gmail.NewPlugin(gmailService)); err != nil {
+	if err := pluginMgr.Register(gmail.NewPlugin(gmailService, gmailPending)); err != nil {
 		fatal("register gmail plugin failed", "error", err)
 	}
 	memStore := memory.NewStore(cfg.MemoryRoot)
@@ -95,7 +103,7 @@ func main() {
 		defer mcpManager.Shutdown()
 	}
 
-	app, err := tgbot.NewApp(cfg, st, gmailService, agent, memStore)
+	app, err := tgbot.NewApp(cfg, st, gmailService, gmailPending, agent, memStore)
 	if err != nil {
 		fatal("init telegram service failed", "error", err)
 	}
@@ -107,21 +115,51 @@ func main() {
 	if err != nil {
 		fatal("init telegram adapter failed", "error", err)
 	}
+	slog.Info("telegram adapter ready")
+	adapters := []platform.Adapter{telegramAdapter}
+	adapterByName := map[string]platform.Adapter{telegramAdapter.Name(): telegramAdapter}
+	if strings.TrimSpace(cfg.WebUIAddr) != "" {
+		adapter := webuiplatform.NewAdapter(cfg.WebUIAddr, st, cfg.DashboardAuth)
+		adapters = append(adapters, adapter)
+		adapterByName[adapter.Name()] = adapter
+		slog.Info("webui adapter registered", "addr", cfg.WebUIAddr)
+	}
+	if strings.TrimSpace(cfg.LarkAppID) != "" && strings.TrimSpace(cfg.LarkAppSecret) != "" {
+		adapter := larkplatform.NewAdapter(cfg.LarkAppID, cfg.LarkAppSecret, cfg.LarkBotName)
+		adapters = append(adapters, adapter)
+		adapterByName[adapter.Name()] = adapter
+	}
+	if strings.TrimSpace(cfg.QQAppID) != "" && strings.TrimSpace(cfg.QQSecret) != "" {
+		adapter := qqplatform.NewAdapter(cfg.QQAppID, cfg.QQSecret, cfg.QQEnableGroup)
+		adapters = append(adapters, adapter)
+		adapterByName[adapter.Name()] = adapter
+	}
+	// sendResponse 根据平台名路由到对应 Adapter 发送响应
+	sendResponse := func(ctx context.Context, platformName, userID string, resp platform.UnifiedResponse) error {
+		platformName = strings.TrimSpace(platformName)
+		if platformName == "" {
+			platformName = telegramAdapter.Name()
+		}
+		adapter, ok := adapterByName[platformName]
+		if !ok {
+			return fmt.Errorf("adapter %s not registered", platformName)
+		}
+		return adapter.Send(ctx, userID, resp)
+	}
 	// 订阅提醒到期事件，发送 Telegram 通知并标记已发
 	bus.Subscribe("reminder.due", func(ctx context.Context, evt event.Event) {
 		content, _ := evt.Payload["content"].(string)
 		reminderID, _ := evt.Payload["id"].(string)
 		userID, _ := evt.Payload["user_id"].(string)
+		platformName, _ := evt.Payload["platform"].(string)
 		if strings.TrimSpace(userID) == "" {
 			return
 		}
-		if err := telegramAdapter.Send(ctx, userID, platform.UnifiedResponse{Text: "⏰ 提醒\n\n" + content, Markdown: true}); err == nil && strings.TrimSpace(reminderID) != "" {
+		if err := sendResponse(ctx, platformName, userID, platform.UnifiedResponse{Text: "⏰ 提醒\n\n" + content, Markdown: true}); err == nil && strings.TrimSpace(reminderID) != "" {
 			_ = st.MarkReminderSent(context.Background(), reminderID)
 		}
 	})
-	scheduler := tgbot.NewScheduler(st, gmailService, agent, func(ctx context.Context, platformName, userID string, resp platform.UnifiedResponse) error {
-		return telegramAdapter.Send(ctx, userID, resp)
-	})
+	scheduler := tgbot.NewScheduler(st, gmailService, agent, sendResponse)
 	scheduler.Start()
 	defer scheduler.Stop()
 	if strings.TrimSpace(cfg.DashboardAddr) != "" {
@@ -133,12 +171,18 @@ func main() {
 			fatal("start dashboard failed", "error", err)
 		}
 		defer dashboardServer.Stop(context.Background())
+		slog.Info("dashboard started", "addr", cfg.DashboardAddr)
 	}
 
 	// 消息处理器：更新指标、发布事件、调用 App 处理
 	handler := func(ctx context.Context, msg platform.UnifiedMessage) (platform.UnifiedResponse, error) {
 		metrics.Default.MessagesTotal.Add(1)
 		metrics.Default.MarkActiveUser(msg.Platform + ":" + msg.UserID)
+		textPreview := msg.Text
+		if len(textPreview) > 60 {
+			textPreview = textPreview[:60] + "..."
+		}
+		slog.Info("message received", "platform", msg.Platform, "user", msg.UserID, "text", textPreview)
 		bus.Publish(ctx, event.Event{
 			Type:   "message.received",
 			Source: msg.Platform,
@@ -149,11 +193,18 @@ func main() {
 				"text":       msg.Text,
 			},
 		})
+		start := time.Now()
 		resp, err := app.HandleMessage(ctx, msg)
+		elapsed := time.Since(start)
 		if err != nil {
 			metrics.Default.ErrorsTotal.Add(1)
-		}
-		if err == nil {
+			slog.Error("message handling failed", "platform", msg.Platform, "user", msg.UserID, "elapsed", elapsed, "error", err)
+		} else {
+			respPreview := resp.Text
+			if len(respPreview) > 80 {
+				respPreview = respPreview[:80] + "..."
+			}
+			slog.Info("message handled", "platform", msg.Platform, "user", msg.UserID, "elapsed", elapsed, "reply_len", len(resp.Text))
 			bus.Publish(ctx, event.Event{
 				Type:   "message.responded",
 				Source: msg.Platform,
@@ -166,6 +217,16 @@ func main() {
 			})
 		}
 		return resp, err
+	}
+	// 启动 telegram 以外的所有 Adapter
+	for _, adapter := range adapters[1:] {
+		adapter := adapter
+		go func() {
+			if err := adapter.Start(ctx, handler); err != nil {
+				slog.Error("adapter exited with error", "adapter", adapter.Name(), "error", err)
+			}
+		}()
+		defer adapter.Stop()
 	}
 
 	var webhookServer *webhook.Server
@@ -188,6 +249,7 @@ func main() {
 		defer watcher.Stop()
 	}
 
+	slog.Info("all components initialized, starting telegram polling...")
 	if err := telegramAdapter.Start(ctx, handler); err != nil {
 		fatal("adapter exited with error", "error", err)
 	}

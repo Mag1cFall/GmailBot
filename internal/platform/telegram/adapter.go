@@ -53,6 +53,9 @@ func (a *Adapter) Start(ctx context.Context, handler baseplatform.MessageHandler
 	}
 	a.bot.Handle(tele.OnText, a.handleText(ctx, handler))
 	a.bot.Handle(&tele.Btn{Unique: "cfg"}, a.handleConfigCallback(ctx))
+	a.bot.Handle(&tele.Btn{Unique: "draft_confirm"}, a.handleDraftCallback(ctx, "confirm"))
+	a.bot.Handle(&tele.Btn{Unique: "draft_cancel"}, a.handleDraftCallback(ctx, "cancel"))
+	a.bot.Handle(&tele.Btn{Unique: "draft_edit"}, a.handleDraftCallback(ctx, "edit"))
 	a.registerCommands()
 
 	go func() {
@@ -100,6 +103,8 @@ func (a *Adapter) handleText(ctx context.Context, handler baseplatform.MessageHa
 		var markup *tele.ReplyMarkup
 		if isConfigCommand(msg.Text) {
 			markup = a.buildConfigMarkup()
+		} else if a.app.HasPendingDraft(c.Sender().ID) {
+			markup = a.buildSendDraftMarkup()
 		}
 		return a.sendToChat(ctx, c.Recipient(), resp, markup)
 	}
@@ -116,6 +121,18 @@ func (a *Adapter) handleConfigCallback(ctx context.Context) func(tele.Context) e
 		_ = c.Respond()
 		if err != nil {
 			return c.Send("处理失败：" + err.Error())
+		}
+		return a.sendToChat(ctx, c.Recipient(), resp, nil)
+	}
+}
+
+// handleDraftCallback 处理草稿确认/取消/修改回调
+func (a *Adapter) handleDraftCallback(ctx context.Context, action string) func(tele.Context) error {
+	return func(c tele.Context) error {
+		_ = c.Respond()
+		resp, err := a.app.HandleSendDraftAction(ctx, c.Sender().ID, action)
+		if err != nil {
+			return c.Send("操作失败：" + err.Error())
 		}
 		return a.sendToChat(ctx, c.Recipient(), resp, nil)
 	}
@@ -138,6 +155,17 @@ func (a *Adapter) buildConfigMarkup() *tele.ReplyMarkup {
 		rows = append(rows, []tele.InlineButton{{Unique: "cfg", Text: option.Display, Data: option.Key}})
 	}
 	markup.InlineKeyboard = rows
+	return markup
+}
+
+// buildSendDraftMarkup 构建发邮件确认面板：确认发送 / 修改 / 取消
+func (a *Adapter) buildSendDraftMarkup() *tele.ReplyMarkup {
+	markup := &tele.ReplyMarkup{}
+	markup.InlineKeyboard = [][]tele.InlineButton{{
+		{Unique: "draft_confirm", Text: "✅ 确认发送"},
+		{Unique: "draft_edit", Text: "✏️ 修改"},
+		{Unique: "draft_cancel", Text: "❌ 取消"},
+	}}
 	return markup
 }
 

@@ -6,9 +6,11 @@ import (
 	"embed"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"gmailbot/config"
 	"gmailbot/internal/agent"
@@ -55,7 +57,9 @@ func NewServer(addr, auth string, pluginMgr *plugin.Manager, registry *agent.Too
 	mux.HandleFunc("/api/plugins/", server.wrap(server.handlePluginToggle))
 	mux.HandleFunc("/api/tools", server.wrap(server.handleTools))
 	mux.HandleFunc("/api/tools/", server.wrap(server.handleToolToggle))
-	mux.HandleFunc("/api/sessions/", server.wrap(server.handleSessions))
+	mux.HandleFunc("/api/sessions", server.wrap(server.handleSessionsOverview))
+	mux.HandleFunc("/api/sessions/", server.wrap(server.handleSessionsDispatch))
+	mux.HandleFunc("/api/context_stats/", server.wrap(server.handleContextStats))
 	mux.HandleFunc("/api/config", server.wrap(server.handleConfig))
 	mux.HandleFunc("/api/config/", server.wrap(server.handleConfigUpdate))
 	mux.HandleFunc("/api/providers", server.wrap(server.handleProviders))
@@ -63,6 +67,40 @@ func NewServer(addr, auth string, pluginMgr *plugin.Manager, registry *agent.Too
 	mux.HandleFunc("/api/metrics", server.wrap(server.handleMetrics))
 	server.httpServer = &http.Server{Addr: addr, Handler: mux}
 	return server
+}
+
+func (s *Server) handleSessionsOverview(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.store.ListRecentSessions(r.Context(), 200)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type sessionView struct {
+		ID            string `json:"id"`
+		Platform      string `json:"platform"`
+		UserID        string `json:"user_id"`
+		Title         string `json:"title"`
+		PersonaName   string `json:"persona_name"`
+		MessageCount  int    `json:"message_count"`
+		TokenEstimate int    `json:"token_estimate"`
+		LastActive    string `json:"last_active"`
+		IsActive      bool   `json:"is_active"`
+	}
+	views := make([]sessionView, 0, len(sessions))
+	for _, item := range sessions {
+		views = append(views, sessionView{
+			ID:            item.ID,
+			Platform:      item.Platform,
+			UserID:        item.UserID,
+			Title:         item.Title,
+			PersonaName:   item.PersonaName,
+			MessageCount:  item.MessageCount,
+			TokenEstimate: agent.EstimateSessionMessagesTokens(item.Messages),
+			LastActive:    item.LastActive.Format(time.RFC3339),
+			IsActive:      item.IsActive,
+		})
+	}
+	writeJSON(w, http.StatusOK, views)
 }
 
 // Start 启动 HTTP 服务，addr 为空时跳过
@@ -88,6 +126,10 @@ func (s *Server) wrap(next http.HandlerFunc) http.HandlerFunc {
 		if !s.authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		p := r.URL.Path
+		if r.Method != http.MethodGet || (p != "/api/logs" && p != "/api/status" && p != "/api/metrics") {
+			slog.Info("dashboard api", "method", r.Method, "path", p)
 		}
 		next(w, r)
 	}
@@ -188,7 +230,11 @@ func (s *Server) handleToolToggle(w http.ResponseWriter, r *http.Request) {
 // handleSessions 列出指定用户的会话列表
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	uid := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	userKey, err := s.store.ResolvePlatformUserKey(r.Context(), "telegram", uid)
+	platformName := strings.TrimSpace(r.URL.Query().Get("platform"))
+	if platformName == "" {
+		platformName = "telegram"
+	}
+	userKey, err := s.store.ResolvePlatformUserKey(r.Context(), platformName, uid)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -199,6 +245,61 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sessions)
+}
+
+// handleSessionsDispatch 根据 HTTP 方法分发到查询或删除
+func (s *Server) handleSessionsDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		s.handleDeleteSession(w, r)
+		return
+	}
+	s.handleSessions(w, r)
+}
+
+// handleDeleteSession 清空指定用户的当前活跃会话消息
+func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	uid := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	platformName := strings.TrimSpace(r.URL.Query().Get("platform"))
+	if platformName == "" {
+		platformName = "telegram"
+	}
+	session, err := s.store.GetOrCreateActiveSessionByIdentity(r.Context(), platformName, uid)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.store.UpdateSessionMessages(r.Context(), session.ID, nil); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": true, "session_id": session.ID})
+}
+
+func (s *Server) handleContextStats(w http.ResponseWriter, r *http.Request) {
+	userID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/context_stats/"))
+	if userID == "" {
+		http.Error(w, "user id is required", http.StatusBadRequest)
+		return
+	}
+	platformName := strings.TrimSpace(r.URL.Query().Get("platform"))
+	if platformName == "" {
+		platformName = "telegram"
+	}
+	session, err := s.store.GetOrCreateActiveSessionByIdentity(r.Context(), platformName, userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ctxMgr := agent.NewContextManager(r.Context(), config.Load(), s.providerManager)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"platform":       platformName,
+		"user_id":        userID,
+		"session_id":     session.ID,
+		"message_count":  len(session.Messages),
+		"token_estimate": agent.EstimateSessionMessagesTokens(session.Messages),
+		"warn_tokens":    ctxMgr.WarnTokens(),
+		"max_tokens":     ctxMgr.MaxTokens(),
+	})
 }
 
 // handleConfig 返回所有可编辑配置项（敏感值打码）

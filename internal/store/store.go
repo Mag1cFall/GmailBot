@@ -1,4 +1,4 @@
-// SQLite 持久化层
+// MySQL 持久化层
 package store
 
 import (
@@ -13,8 +13,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-const maxSessionMessages = 50
 
 // User 用户数据
 type User struct {
@@ -39,11 +37,27 @@ func (u User) DigestTimeRaw() string {
 	return strings.Join(u.DigestTimes, ",")
 }
 
-// SessionMessage 会话消息
+// SessionToolFunction 工具调用中的函数信息
+type SessionToolFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// SessionToolCall 单次工具调用记录
+type SessionToolCall struct {
+	ID       string              `json:"id"`
+	Type     string              `json:"type"`
+	Function SessionToolFunction `json:"function"`
+}
+
+// SessionMessage 会话中的单条消息
 type SessionMessage struct {
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	Role       string            `json:"role"`
+	Content    string            `json:"content"`
+	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	ToolCalls  []SessionToolCall `json:"tool_calls,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
 }
 
 // Session 对话会话
@@ -68,6 +82,21 @@ type SessionSummary struct {
 	IsActive   bool
 }
 
+// SessionOverview 会话概览，包含消息列表，供 Dashboard 统计 token 用量
+type SessionOverview struct {
+	ID           string           `json:"id"`
+	TgUserID     int64            `json:"tg_user_id"`
+	Platform     string           `json:"platform"`
+	UserID       string           `json:"user_id"`
+	PersonaName  string           `json:"persona_name"`
+	Title        string           `json:"title"`
+	MessageCount int              `json:"message_count"`
+	CreatedAt    time.Time        `json:"created_at"`
+	LastActive   time.Time        `json:"last_active"`
+	IsActive     bool             `json:"is_active"`
+	Messages     []SessionMessage `json:"messages,omitempty"`
+}
+
 // Reminder 提醒事项
 type Reminder struct {
 	ID        string
@@ -80,19 +109,23 @@ type Reminder struct {
 	SentAt    time.Time
 }
 
+// EnsureUser 确保 Telegram 用户存在，不存在则创建
 func (s *Store) EnsureUser(ctx context.Context, tgUserID int64) error {
 	if _, err := s.ResolvePlatformUserKey(ctx, "telegram", strconv.FormatInt(tgUserID, 10)); err != nil {
 		return err
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO users (tg_user_id, platform, user_id) VALUES (?, 'telegram', ?) ON CONFLICT(tg_user_id) DO NOTHING`,
+		`INSERT IGNORE INTO users (tg_user_id, platform, user_id, created_at) VALUES (?, 'telegram', ?, ?)`,
 		tgUserID,
 		strconv.FormatInt(tgUserID, 10),
+		now,
 	)
 	return err
 }
 
+// ResolvePlatformUserKey 查找或创建平台用户映射得到内部主键
 func (s *Store) ResolvePlatformUserKey(ctx context.Context, platform, userID string) (int64, error) {
 	platform, userID, err := normalizeIdentity(platform, userID)
 	if err != nil {
@@ -103,21 +136,26 @@ func (s *Store) ResolvePlatformUserKey(ctx context.Context, platform, userID str
 		if parseErr != nil {
 			return 0, fmt.Errorf("invalid telegram user id %q: %w", userID, parseErr)
 		}
+		now := time.Now().UTC().Format(time.RFC3339)
 		if _, err := s.db.ExecContext(
 			ctx,
-			`INSERT INTO users (tg_user_id, platform, user_id) VALUES (?, ?, ?) ON CONFLICT(tg_user_id) DO UPDATE SET platform = excluded.platform, user_id = excluded.user_id`,
+			`INSERT INTO users (tg_user_id, platform, user_id, created_at) VALUES (?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE platform = VALUES(platform), user_id = VALUES(user_id)`,
 			key,
 			platform,
 			userID,
+			now,
 		); err != nil {
 			return 0, err
 		}
 		if _, err := s.db.ExecContext(
 			ctx,
-			`INSERT INTO user_identities (platform, user_id, user_key) VALUES (?, ?, ?) ON CONFLICT(platform, user_id) DO UPDATE SET user_key = excluded.user_key`,
+			`INSERT INTO user_identities (platform, user_id, user_key, created_at) VALUES (?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE user_key = VALUES(user_key)`,
 			platform,
 			userID,
 			key,
+			now,
 		); err != nil {
 			return 0, err
 		}
@@ -154,22 +192,25 @@ func (s *Store) ResolvePlatformUserKey(ctx context.Context, platform, userID str
 	if nextKey >= 0 {
 		nextKey = -1
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO users (tg_user_id, platform, user_id) VALUES (?, ?, ?)`,
+		`INSERT INTO users (tg_user_id, platform, user_id, created_at) VALUES (?, ?, ?, ?)`,
 		nextKey,
 		platform,
 		userID,
+		now,
 	); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO user_identities (platform, user_id, user_key) VALUES (?, ?, ?)`,
+		`INSERT INTO user_identities (platform, user_id, user_key, created_at) VALUES (?, ?, ?, ?)`,
 		platform,
 		userID,
 		nextKey,
+		now,
 	); err != nil {
 		return 0, err
 	}
@@ -263,7 +304,7 @@ func (s *Store) SaveUserTokens(
 		ctx,
 		`UPDATE users
 		   SET platform = COALESCE(NULLIF(platform, ''), 'telegram'),
-		       user_id = COALESCE(NULLIF(user_id, ''), CAST(tg_user_id AS TEXT)),
+		       user_id = COALESCE(NULLIF(user_id, ''), CAST(tg_user_id AS CHAR)),
 		       gmail_address = ?,
 		       access_token = ?,
 		       refresh_token = CASE WHEN ? <> '' THEN ? ELSE refresh_token END,
@@ -403,10 +444,10 @@ func (s *Store) ListAuthorizedUsers(ctx context.Context) ([]User, error) {
 func (s *Store) MarkEmailSeen(ctx context.Context, tgUserID int64, emailID string) error {
 	_, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO seen_emails (tg_user_id, email_id) VALUES (?, ?)
-		 ON CONFLICT(tg_user_id, email_id) DO NOTHING`,
+		`INSERT IGNORE INTO seen_emails (tg_user_id, email_id, notified_at) VALUES (?, ?, ?)`,
 		tgUserID,
 		strings.TrimSpace(emailID),
+		time.Now().UTC().Format(time.RFC3339),
 	)
 	return err
 }
@@ -553,6 +594,53 @@ func (s *Store) ListSessions(ctx context.Context, tgUserID int64, limit int) ([]
 	return sessions, rows.Err()
 }
 
+func (s *Store) ListRecentSessions(ctx context.Context, limit int) ([]SessionOverview, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, tg_user_id, platform, user_id, persona_name, title, messages, created_at, last_active, is_active
+		   FROM sessions
+		  ORDER BY last_active DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]SessionOverview, 0)
+	for rows.Next() {
+		var (
+			item        SessionOverview
+			platform    sql.NullString
+			userID      sql.NullString
+			personaName sql.NullString
+			messages    string
+			createdAt   sql.NullString
+			lastActive  sql.NullString
+			isActive    int
+		)
+		if err := rows.Scan(&item.ID, &item.TgUserID, &platform, &userID, &personaName, &item.Title, &messages, &createdAt, &lastActive, &isActive); err != nil {
+			return nil, err
+		}
+		item.Platform = normalizePlatform(platform.String)
+		item.UserID = strings.TrimSpace(userID.String)
+		if item.UserID == "" && item.Platform == "telegram" {
+			item.UserID = strconv.FormatInt(item.TgUserID, 10)
+		}
+		item.PersonaName = strings.TrimSpace(personaName.String)
+		item.Messages = decodeMessages(messages)
+		item.MessageCount = len(item.Messages)
+		item.CreatedAt = parseSQLiteTime(createdAt.String)
+		item.LastActive = parseSQLiteTime(lastActive.String)
+		item.IsActive = isActive == 1
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ResolveSessionID(ctx context.Context, tgUserID int64, prefix string) (string, error) {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
@@ -626,29 +714,44 @@ func (s *Store) ClearActiveSessionMessages(ctx context.Context, tgUserID int64) 
 	return s.UpdateSessionMessages(ctx, session.ID, []SessionMessage{})
 }
 
+func (s *Store) ClearActiveSessionMessagesByIdentity(ctx context.Context, platform, userID string) error {
+	session, err := s.GetOrCreateActiveSessionByIdentity(ctx, platform, userID)
+	if err != nil {
+		return err
+	}
+	return s.UpdateSessionMessages(ctx, session.ID, []SessionMessage{})
+}
+
 func (s *Store) AppendActiveSessionMessage(ctx context.Context, tgUserID int64, role string, content string) (Session, error) {
 	return s.AppendActiveSessionMessageByIdentity(ctx, "telegram", strconv.FormatInt(tgUserID, 10), role, content)
 }
 
 func (s *Store) AppendActiveSessionMessageByIdentity(ctx context.Context, platform, userID, role string, content string) (Session, error) {
-	session, err := s.GetOrCreateActiveSessionByIdentity(ctx, platform, userID)
-	if err != nil {
-		return Session{}, err
-	}
-	messages := append(session.Messages, SessionMessage{
+	return s.AppendActiveSessionEntryByIdentity(ctx, platform, userID, SessionMessage{
 		Role:      strings.TrimSpace(role),
 		Content:   strings.TrimSpace(content),
 		CreatedAt: time.Now().UTC(),
 	})
-	if len(messages) > maxSessionMessages {
-		messages = messages[len(messages)-maxSessionMessages:]
+}
+
+func (s *Store) AppendActiveSessionEntryByIdentity(ctx context.Context, platform, userID string, message SessionMessage) (Session, error) {
+	session, err := s.GetOrCreateActiveSessionByIdentity(ctx, platform, userID)
+	if err != nil {
+		return Session{}, err
 	}
+	message.Role = strings.TrimSpace(message.Role)
+	message.Content = strings.TrimSpace(message.Content)
+	if message.CreatedAt.IsZero() {
+		message.CreatedAt = time.Now().UTC()
+	}
+	messages := append(session.Messages, message)
 	if err := s.UpdateSessionMessages(ctx, session.ID, messages); err != nil {
 		return Session{}, err
 	}
 	return s.GetSession(ctx, session.ID)
 }
 
+// UpdateSessionMessages 将会话消息按 JSON 序列化后写入数据库
 func (s *Store) UpdateSessionMessages(ctx context.Context, sessionID string, messages []SessionMessage) error {
 	payload, err := json.Marshal(messages)
 	if err != nil {
@@ -666,6 +769,7 @@ func (s *Store) UpdateSessionMessages(ctx context.Context, sessionID string, mes
 	return err
 }
 
+// SetActiveSessionPersonaByIdentity 设置当前活跃会话的人格
 func (s *Store) SetActiveSessionPersonaByIdentity(ctx context.Context, platform, userID, personaName string) error {
 	session, err := s.GetOrCreateActiveSessionByIdentity(ctx, platform, userID)
 	if err != nil {
@@ -675,6 +779,7 @@ func (s *Store) SetActiveSessionPersonaByIdentity(ctx context.Context, platform,
 	return err
 }
 
+// getSessionBy 按指定 SQL 查询获取单个会话
 func (s *Store) getSessionBy(ctx context.Context, query string, args ...any) (Session, error) {
 	var (
 		item        Session
@@ -715,6 +820,7 @@ func (s *Store) getSessionBy(ctx context.Context, query string, args ...any) (Se
 	return item, nil
 }
 
+// normalizeIdentity 规范化平台名和用户 ID
 func normalizeIdentity(platform, userID string) (string, string, error) {
 	platform = normalizePlatform(platform)
 	userID = strings.TrimSpace(userID)
@@ -724,6 +830,7 @@ func normalizeIdentity(platform, userID string) (string, string, error) {
 	return platform, userID, nil
 }
 
+// normalizePlatform 将平台名转成小写，空则默认 telegram
 func normalizePlatform(platform string) string {
 	platform = strings.ToLower(strings.TrimSpace(platform))
 	if platform == "" {
@@ -732,6 +839,7 @@ func normalizePlatform(platform string) string {
 	return platform
 }
 
+// decodeMessages 将数据库存储的 JSON 字符串解析为消息列表
 func decodeMessages(raw string) []SessionMessage {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -741,12 +849,10 @@ func decodeMessages(raw string) []SessionMessage {
 	if err := json.Unmarshal([]byte(raw), &messages); err != nil {
 		return []SessionMessage{}
 	}
-	if len(messages) > maxSessionMessages {
-		return messages[len(messages)-maxSessionMessages:]
-	}
 	return messages
 }
 
+// parseDigestTimes 将逗号分隔的摆所时间字符串解析为切片
 func parseDigestTimes(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -762,6 +868,7 @@ func parseDigestTimes(raw string) []string {
 	return out
 }
 
+// parseSQLiteTime 将 RFC3339 或常见日期格式字符串解析为时间（兼容旧数据）
 func parseSQLiteTime(raw string) time.Time {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -781,12 +888,14 @@ func parseSQLiteTime(raw string) time.Time {
 	return time.Time{}
 }
 
+// rollback 尝试回滚事务，如果 tx 为 nil 则忽略
 func rollback(tx *sql.Tx) {
 	if tx != nil {
 		_ = tx.Rollback()
 	}
 }
 
+// CreateReminder 创建一条提醒
 func (s *Store) CreateReminder(ctx context.Context, reminder Reminder) (Reminder, error) {
 	platformName, userID, err := normalizeIdentity(reminder.Platform, reminder.UserID)
 	if err != nil {
@@ -824,6 +933,7 @@ func (s *Store) CreateReminder(ctx context.Context, reminder Reminder) (Reminder
 	return reminder, nil
 }
 
+// ListDueReminders 列出 before 时刻之前尚未发送的提醒
 func (s *Store) ListDueReminders(ctx context.Context, before time.Time) ([]Reminder, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
@@ -856,6 +966,7 @@ func (s *Store) ListDueReminders(ctx context.Context, before time.Time) ([]Remin
 	return reminders, rows.Err()
 }
 
+// MarkReminderSent 将提醒标记为已发送
 func (s *Store) MarkReminderSent(ctx context.Context, reminderID string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE reminders SET sent_at = ? WHERE id = ?`, time.Now().UTC().Format(time.RFC3339), reminderID)
 	return err

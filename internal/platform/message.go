@@ -13,9 +13,9 @@ type UnifiedMessage struct {
 
 // UnifiedResponse 统一出站响应
 type UnifiedResponse struct {
-	Text        string
-	Markdown    bool
-	Attachments []Attachment
+	Text        string       `json:"text"`
+	Markdown    bool         `json:"markdown,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"`
 }
 
 // Attachment 附件

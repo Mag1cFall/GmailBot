@@ -11,7 +11,7 @@ func TestWatcherReloadsUpdatedEnvValues(t *testing.T) {
 	tmpDir := t.TempDir()
 	envPath := filepath.Join(tmpDir, ".env")
 	writeEnv := func(model string) {
-		content := "BOT_TOKEN=test-bot\nAI_BASE_URL=http://localhost\nAI_API_KEY=test-key\nAI_MODEL=" + model + "\n"
+		content := "BOT_TOKEN=test-bot\nAI_BASE_URL=http://localhost\nAI_API_KEY=test-key\nAI_MODEL=" + model + "\nDB_DSN=root@tcp(127.0.0.1:3306)/test?parseTime=true\n"
 		if err := os.WriteFile(envPath, []byte(content), 0644); err != nil {
 			t.Fatalf("write env failed: %v", err)
 		}

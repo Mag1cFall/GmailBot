@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	mimeenc "mime"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -622,14 +623,17 @@ func (s *Service) ModifyMessageLabels(ctx context.Context, tgUserID int64, email
 	return nil
 }
 
-// buildRawEmail 拼接 RFC 2822 格式的邮件原始内容
+// buildRawEmail 拼接 RFC 2822 + MIME 格式邮件，正确处理非 ASCII 字符
 func buildRawEmail(from, to, subject, inReplyTo, references, body string) string {
+	encSubject := mimeenc.BEncoding.Encode("UTF-8", subject)
+	encBody := base64.StdEncoding.EncodeToString([]byte(body))
 	var sb strings.Builder
 	sb.WriteString("From: " + from + "\r\n")
 	sb.WriteString("To: " + to + "\r\n")
-	sb.WriteString("Subject: " + subject + "\r\n")
+	sb.WriteString("Subject: " + encSubject + "\r\n")
 	sb.WriteString("MIME-Version: 1.0\r\n")
 	sb.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
+	sb.WriteString("Content-Transfer-Encoding: base64\r\n")
 	if inReplyTo != "" {
 		sb.WriteString("In-Reply-To: " + inReplyTo + "\r\n")
 		sb.WriteString("References: " + inReplyTo + "\r\n")
@@ -638,6 +642,10 @@ func buildRawEmail(from, to, subject, inReplyTo, references, body string) string
 		sb.WriteString("References: " + references + "\r\n")
 	}
 	sb.WriteString("\r\n")
-	sb.WriteString(body)
+	for len(encBody) > 76 {
+		sb.WriteString(encBody[:76] + "\r\n")
+		encBody = encBody[76:]
+	}
+	sb.WriteString(encBody)
 	return sb.String()
 }

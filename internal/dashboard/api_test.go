@@ -42,7 +42,7 @@ func TestStatusAndToolToggleEndpoints(t *testing.T) {
 	indexReq := httptest.NewRequest(http.MethodGet, "/", nil)
 	indexRes := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(indexRes, indexReq)
-	if indexRes.Code != http.StatusOK || !strings.Contains(indexRes.Body.String(), "小 AstrBot") {
+	if indexRes.Code != http.StatusOK || !strings.Contains(indexRes.Body.String(), "GmailBot") {
 		t.Fatalf("unexpected dashboard html: %s", indexRes.Body.String())
 	}
 	t.Logf("dashboard html prefix: %s", strings.SplitN(strings.TrimSpace(indexRes.Body.String()), "\n", 2)[0])

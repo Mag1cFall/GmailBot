@@ -4,6 +4,7 @@ package tgbot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,7 @@ func (s *Scheduler) runMinuteTasks() {
 	defer cancel()
 	users, err := s.store.ListAuthorizedUsers(ctx)
 	if err != nil {
+		slog.Error("scheduler list users failed", "error", err)
 		return
 	}
 	now := time.Now()
@@ -145,6 +147,7 @@ func (s *Scheduler) pollNewEmails(ctx context.Context, user store.User) {
 	query := fmt.Sprintf("is:unread newer_than:%dm", interval+1)
 	emails, err := s.gmail.ListEmails(ctx, user.TgUserID, 20, query)
 	if err != nil {
+		slog.Warn("scheduler poll failed", "user", schedulerIdentity(user), "error", err)
 		return
 	}
 	identity := schedulerIdentity(user)
@@ -180,12 +183,15 @@ func (s *Scheduler) pushWithAIFilter(ctx context.Context, user store.User, item 
 	defer cancel()
 	verdict, summary, err := s.ai.JudgeEmailImportance(aiCtx, user.TgUserID, item.Subject, item.From, item.Snippet)
 	if err != nil {
+		slog.Warn("scheduler ai judge failed", "user", schedulerIdentity(user), "subject", item.Subject, "error", err)
 		s.pushEmailNotify(context.Background(), user, item, "")
 		return
 	}
 	if !verdict {
+		slog.Debug("scheduler email filtered", "user", schedulerIdentity(user), "subject", item.Subject, "reason", summary)
 		return
 	}
+	slog.Info("scheduler email important", "user", schedulerIdentity(user), "subject", item.Subject, "reason", summary)
 	s.pushEmailNotify(context.Background(), user, item, summary)
 }
 
@@ -206,8 +212,10 @@ func (s *Scheduler) pushEmailNotify(ctx context.Context, user store.User, item g
 func (s *Scheduler) pushDailyDigest(ctx context.Context, user store.User) {
 	digest, err := s.ai.GenerateDailyDigest(ctx, user.TgUserID)
 	if err != nil {
+		slog.Error("scheduler digest failed", "user", schedulerIdentity(user), "error", err)
 		return
 	}
+	slog.Info("scheduler digest sent", "user", schedulerIdentity(user), "len", len(digest))
 	if s.send != nil {
 		_ = s.send(ctx, user.Platform, user.UserID, platform.UnifiedResponse{Text: "🗓 *每日邮件摘要*\n\n" + digest, Markdown: true})
 	}
@@ -245,6 +253,7 @@ func (s *Scheduler) runCleanup() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, _ = s.store.CleanOldSeenEmails(ctx, 7)
+	slog.Info("scheduler cleanup done")
 	s.mu.Lock()
 	today := time.Now().Format("2006-01-02")
 	for key := range s.lastDigest {

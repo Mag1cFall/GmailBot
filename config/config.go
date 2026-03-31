@@ -32,12 +32,15 @@ type Config struct {
 	AIBaseURL              string
 	AIAPIKey               string
 	AIModel                string
-	DBPath                 string
+	DBDSN                  string
 	TelegramTimeoutSec     int
 	AITimeoutSec           int
 	AIProviderType         string
 	AIFallbackProviders    []AIProviderConfig
 	AIToolMaxSteps         int
+	AIContextWarnTokens    int
+	AIContextMaxTokens     int
+	AIContextKeepRecent    int
 	MemoryRoot             string
 	KnowledgeRoot          string
 	MessageRateLimitPerMin int
@@ -49,6 +52,13 @@ type Config struct {
 	DefaultPersona         string
 	DashboardAddr          string
 	DashboardAuth          string
+	WebUIAddr              string
+	LarkAppID              string
+	LarkAppSecret          string
+	LarkBotName            string
+	QQAppID                string
+	QQSecret               string
+	QQEnableGroup          bool
 }
 
 // Load 从 .env 加载配置
@@ -75,12 +85,15 @@ func loadFromPath(envPath string) Config {
 		AIBaseURL:              mustGet("AI_BASE_URL"),
 		AIAPIKey:               mustGet("AI_API_KEY"),
 		AIModel:                mustGet("AI_MODEL"),
-		DBPath:                 getOrDefault("DB_PATH", "./data/gmailbot.db"),
+		DBDSN:                  mustGet("DB_DSN"),
 		TelegramTimeoutSec:     getIntOrDefault("TELEGRAM_TIMEOUT_SEC", 10),
 		AITimeoutSec:           getIntOrDefault("AI_TIMEOUT_SEC", 90),
 		AIProviderType:         getOrDefault("AI_PROVIDER_TYPE", "openai_compat"),
 		AIFallbackProviders:    fallbackProviders,
 		AIToolMaxSteps:         getIntOrDefault("AI_TOOL_MAX_STEPS", 6),
+		AIContextWarnTokens:    getIntOrDefault("AI_CONTEXT_WARN_TOKENS", 0),
+		AIContextMaxTokens:     getIntOrDefault("AI_CONTEXT_MAX_TOKENS", 0),
+		AIContextKeepRecent:    getIntOrDefault("AI_CONTEXT_KEEP_RECENT", 6),
 		MemoryRoot:             getOrDefault("MEMORY_ROOT", "./data/memory"),
 		KnowledgeRoot:          getOrDefault("KNOWLEDGE_ROOT", "./data/knowledge"),
 		MessageRateLimitPerMin: getIntOrDefault("MESSAGE_RATE_LIMIT_PER_MIN", 0),
@@ -92,6 +105,13 @@ func loadFromPath(envPath string) Config {
 		DefaultPersona:         getOrDefault("DEFAULT_PERSONA", ""),
 		DashboardAddr:          getOrDefault("DASHBOARD_ADDR", ""),
 		DashboardAuth:          getOrDefault("DASHBOARD_AUTH", ""),
+		WebUIAddr:              getOrDefault("WEBUI_ADDR", ""),
+		LarkAppID:              getOrDefault("LARK_APP_ID", ""),
+		LarkAppSecret:          getOrDefault("LARK_APP_SECRET", ""),
+		LarkBotName:            getOrDefault("LARK_BOT_NAME", ""),
+		QQAppID:                getOrDefault("QQ_APPID", ""),
+		QQSecret:               getOrDefault("QQ_SECRET", ""),
+		QQEnableGroup:          getBoolOrDefault("QQ_ENABLE_GROUP", true),
 	}
 	if cfg.TelegramTimeoutSec <= 0 {
 		cfg.TelegramTimeoutSec = 10
@@ -101,6 +121,9 @@ func loadFromPath(envPath string) Config {
 	}
 	if cfg.AIToolMaxSteps <= 0 {
 		cfg.AIToolMaxSteps = 6
+	}
+	if cfg.AIContextKeepRecent <= 0 {
+		cfg.AIContextKeepRecent = 6
 	}
 	if cfg.ConfigWatchDebounceMS <= 0 {
 		cfg.ConfigWatchDebounceMS = 800
@@ -161,12 +184,28 @@ func getBoolOrDefault(key string, def bool) bool {
 func (c Config) String() string {
 	return fmt.Sprintf(
 		"db=%s ai_model=%s oauth_redirect=%s provider=%s fallbacks=%d",
-		c.DBPath,
+		maskDSN(c.DBDSN),
 		c.AIModel,
 		c.OAuthRedirectURL,
 		c.AIProviderType,
 		len(c.AIFallbackProviders),
 	)
+}
+
+func maskDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return "(empty)"
+	}
+	atIdx := strings.Index(dsn, "@")
+	if atIdx < 0 {
+		return "***"
+	}
+	colonIdx := strings.Index(dsn[:atIdx], ":")
+	if colonIdx < 0 {
+		return dsn[:atIdx] + "@" + dsn[atIdx+1:]
+	}
+	return dsn[:colonIdx+1] + "***@" + dsn[atIdx+1:]
 }
 
 // EditableKeys 允许通过 Dashboard 修改的配置项
@@ -177,6 +216,9 @@ var EditableKeys = []string{
 	"AI_PROVIDER_TYPE",
 	"AI_FALLBACK_PROVIDERS",
 	"AI_TOOL_MAX_STEPS",
+	"AI_CONTEXT_WARN_TOKENS",
+	"AI_CONTEXT_MAX_TOKENS",
+	"AI_CONTEXT_KEEP_RECENT",
 	"AI_TIMEOUT_SEC",
 	"TELEGRAM_TIMEOUT_SEC",
 	"MEMORY_ROOT",
@@ -186,6 +228,9 @@ var EditableKeys = []string{
 	"MCP_SERVERS",
 	"DASHBOARD_ADDR",
 	"DASHBOARD_AUTH",
+	"WEBUI_ADDR",
+	"LARK_BOT_NAME",
+	"QQ_ENABLE_GROUP",
 }
 
 // UpdateEnvFile 更新 .env 文件中的配置项

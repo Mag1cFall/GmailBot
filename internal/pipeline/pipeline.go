@@ -3,6 +3,7 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,9 +115,14 @@ func (p *Pipeline) runStage(ctx context.Context, evt *Event, stages []Stage, idx
 		return nil
 	}
 	stage := stages[idx]
-	return stage.Process(ctx, evt, func(innerCtx context.Context, innerEvt *Event) error {
+	slog.Debug("pipeline stage", "stage", stage.Name(), "platform", evt.Message.Platform, "user", evt.Message.UserID)
+	err := stage.Process(ctx, evt, func(innerCtx context.Context, innerEvt *Event) error {
 		return p.runStage(innerCtx, innerEvt, stages, idx+1)
 	})
+	if evt.Aborted {
+		slog.Info("pipeline aborted", "stage", stage.Name(), "reason", evt.AbortMsg)
+	}
+	return err
 }
 
 // StageNames 返回所有阶段名称

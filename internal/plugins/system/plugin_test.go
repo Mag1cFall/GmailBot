@@ -2,7 +2,6 @@ package system
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,15 +9,11 @@ import (
 	"gmailbot/internal/agent"
 	"gmailbot/internal/event"
 	"gmailbot/internal/plugin"
-	"gmailbot/internal/store"
+	"gmailbot/internal/testutil"
 )
 
 func TestSetReminderToolStoresReminder(t *testing.T) {
-	st, err := store.Init(filepath.Join(t.TempDir(), "system.db"))
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	defer st.Close()
+	st := testutil.NewTestStore(t)
 	registry := agent.NewToolRegistry()
 	plg := NewPlugin()
 	if err := plg.Init(&plugin.Context{Registry: registry, Bus: event.NewBus(), Extra: map[string]any{"store": st}}); err != nil {

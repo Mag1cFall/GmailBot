@@ -41,6 +41,7 @@ func (a *App) registerHandlers() error {
 		{Name: "sessions", Description: "会话列表", Handler: a.handleSessions},
 		{Name: "switch", Description: "切换会话 /switch <id前缀>", Handler: a.handleSwitchSession},
 		{Name: "clear", Description: "清空当前会话", Handler: a.handleClearSession},
+		{Name: "compact", Description: "压缩当前会话上下文", Handler: a.handleCompactSession},
 		{Name: "persona", Description: "查看或切换人格 /persona [name|list]", Handler: a.handlePersona},
 		{Name: "config", Description: "热修改配置项（AI模型/API/超时）", Handler: a.handleConfig},
 		{Name: "memory", Description: "查看记忆文件列表和大小", Handler: a.handleMemory},
@@ -85,6 +86,7 @@ func (a *App) handleHelp(ctx context.Context, msg platform.UnifiedMessage, args 
 		"/sessions — 会话列表\n" +
 		"/switch <id> — 切换会话\n" +
 		"/clear — 清空当前会话\n" +
+		"/compact — 压缩当前会话上下文\n" +
 		"\n🎭 *人格切换*\n" +
 		"/persona — 查看当前人格\n" +
 		"/persona list — 列出所有人格\n" +
@@ -492,6 +494,20 @@ func (a *App) handleClearSession(ctx context.Context, msg platform.UnifiedMessag
 		return platform.UnifiedResponse{Text: "清理会话失败：" + err.Error()}, nil
 	}
 	return platform.UnifiedResponse{Text: "当前会话上下文已清空。"}, nil
+}
+
+// handleCompactSession 压缩当前会话上下文并返回 token 前后对比
+func (a *App) handleCompactSession(ctx context.Context, msg platform.UnifiedMessage, args []string) (platform.UnifiedResponse, error) {
+	before, after, err := a.ai.CompactSession(ctx, msg.Platform, msg.UserID)
+	if err != nil {
+		return platform.UnifiedResponse{Text: "压缩失败：" + err.Error()}, nil
+	}
+	keepRecent := 0
+	if a.ai.ContextManager() != nil {
+		keepRecent = a.ai.ContextManager().KeepRecent()
+	}
+	text := fmt.Sprintf("✅ 压缩完成，%d tokens → %d tokens，保留最近 %d 轮", before, after, keepRecent)
+	return platform.UnifiedResponse{Text: text}, nil
 }
 
 // handlePersona 查看或切换人设

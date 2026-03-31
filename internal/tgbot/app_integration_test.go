@@ -16,9 +16,11 @@ import (
 	agentpkg "gmailbot/internal/agent"
 	"gmailbot/internal/event"
 	"gmailbot/internal/memory"
+	"gmailbot/internal/gmail"
 	"gmailbot/internal/platform"
 	"gmailbot/internal/plugin"
 	"gmailbot/internal/store"
+	"gmailbot/internal/testutil"
 )
 
 func TestAppHandleMessageBlocksUnauthorizedUsers(t *testing.T) {
@@ -114,6 +116,11 @@ func newTestApp(t *testing.T) (*App, *store.Store, *appTestState) {
 	t.Helper()
 	state := &appTestState{secret: "super-secret-key"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/models" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"mock","context_window":128000}]}`))
+			return
+		}
 		defer r.Body.Close()
 		var payload map[string]any
 		body, _ := io.ReadAll(r.Body)
@@ -134,13 +141,7 @@ func newTestApp(t *testing.T) (*App, *store.Store, *appTestState) {
 	}))
 	t.Cleanup(server.Close)
 
-	st, err := store.Init(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = st.Close()
-	})
+	st := testutil.NewTestStore(t)
 
 	registry := agentpkg.NewToolRegistry()
 	pluginMgr := plugin.NewManager(registry, event.NewBus(), map[string]any{})
@@ -160,8 +161,8 @@ func newTestApp(t *testing.T) (*App, *store.Store, *appTestState) {
 		AIModel:                "mock",
 		MessageRateLimitPerMin: 3,
 		AIToolMaxSteps:         3,
-		MemoryRoot:             filepath.Join(t.TempDir(), "memory"),
-	}, st, nil, ag, memory.NewStore(filepath.Join(t.TempDir(), "memory")))
+		MemoryRoot:             t.TempDir(),
+	}, st, nil, gmail.NewPendingStore(), ag, memory.NewStore(filepath.Join(t.TempDir(), "memory")))
 	if err != nil {
 		t.Fatalf("new app failed: %v", err)
 	}

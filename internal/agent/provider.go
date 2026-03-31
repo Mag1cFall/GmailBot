@@ -3,11 +3,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"gmailbot/config"
 
@@ -46,13 +49,17 @@ type ProviderInfo struct {
 type Provider interface {
 	Name() string
 	Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
+	FetchContextWindow(ctx context.Context, model string) (int, error)
 }
 
 // OpenAIProvider OpenAI 兼容 API 服务商
 type OpenAIProvider struct {
-	name   string
-	client *openai.Client
-	model  string
+	name       string
+	client     *openai.Client
+	baseURL    string
+	apiKey     string
+	model      string
+	httpClient *http.Client
 }
 
 // NewOpenAIProvider 创建 OpenAI 兴容 API 服务商
@@ -60,9 +67,12 @@ func NewOpenAIProvider(name, baseURL, apiKey, model string) *OpenAIProvider {
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = strings.TrimSuffix(baseURL, "/")
 	return &OpenAIProvider{
-		name:   name,
-		client: openai.NewClientWithConfig(cfg),
-		model:  model,
+		name:       name,
+		client:     openai.NewClientWithConfig(cfg),
+		baseURL:    strings.TrimSuffix(baseURL, "/"),
+		apiKey:     apiKey,
+		model:      model,
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -93,19 +103,67 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req ChatRequest) (ChatRespons
 		chatReq.Tools = req.Tools
 	}
 
+	start := time.Now()
 	resp, err := p.client.CreateChatCompletion(ctx, chatReq)
+	elapsed := time.Since(start)
 	if err != nil {
+		slog.Error("llm request failed", "provider", p.name, "model", chatReq.Model, "elapsed", elapsed, "error", err)
 		return ChatResponse{}, err
 	}
 	if len(resp.Choices) == 0 {
+		slog.Error("llm empty response", "provider", p.name, "model", chatReq.Model, "elapsed", elapsed)
 		return ChatResponse{}, errors.New("empty model response")
 	}
 
 	choice := resp.Choices[0].Message
+	slog.Info("llm response", "provider", p.name, "model", chatReq.Model, "elapsed", elapsed, "prompt_tokens", resp.Usage.PromptTokens, "completion_tokens", resp.Usage.CompletionTokens, "tool_calls", len(choice.ToolCalls))
 	return ChatResponse{
 		Content:   strings.TrimSpace(choice.Content),
 		ToolCalls: choice.ToolCalls,
 	}, nil
+}
+
+func (p *OpenAIProvider) FetchContextWindow(ctx context.Context, model string) (int, error) {
+	targetModel := p.resolveModel(model)
+	if targetModel == "" {
+		return 0, errors.New("empty model")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(p.apiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.apiKey))
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("fetch models failed: %s", resp.Status)
+	}
+	var payload struct {
+		Data []struct {
+			ID            string          `json:"id"`
+			ContextWindow json.RawMessage `json:"context_window"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0, err
+	}
+	for _, item := range payload.Data {
+		if strings.TrimSpace(item.ID) != targetModel {
+			continue
+		}
+		window := parseContextWindow(item.ContextWindow)
+		if window > 0 {
+			return window, nil
+		}
+		return 0, fmt.Errorf("model %s missing context_window", targetModel)
+	}
+	return 0, fmt.Errorf("model %s not found in models response", targetModel)
 }
 
 // resolveModel 返回实际使用的模型，允许单次请求覆盖
@@ -118,8 +176,10 @@ func (p *OpenAIProvider) resolveModel(override string) string {
 
 // ProviderManager 管理多个 AI 服务商，失败自动 fallback
 type ProviderManager struct {
-	mu        sync.RWMutex
-	providers []Provider
+	mu                    sync.RWMutex
+	providers             []Provider
+	activeIndex           int
+	fallbackContextWindow int
 }
 
 // NewProviderManager 创建空的服务商管理器
@@ -132,6 +192,11 @@ func (pm *ProviderManager) LoadFromConfig(cfg config.Config) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.providers = nil
+	pm.activeIndex = 0
+	pm.fallbackContextWindow = cfg.AIContextMaxTokens
+	if pm.fallbackContextWindow <= 0 {
+		pm.fallbackContextWindow = 128000
+	}
 
 	for _, pc := range cfg.Providers() {
 		switch pc.Type {
@@ -150,6 +215,7 @@ func (pm *ProviderManager) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 	pm.mu.RLock()
 	providers := make([]Provider, len(pm.providers))
 	copy(providers, pm.providers)
+	activeIndex := pm.activeIndex
 	pm.mu.RUnlock()
 
 	if len(providers) == 0 {
@@ -157,17 +223,49 @@ func (pm *ProviderManager) Chat(ctx context.Context, req ChatRequest) (ChatRespo
 	}
 
 	var lastErr error
-	for i, p := range providers {
+	for attempt := 0; attempt < len(providers); attempt++ {
+		idx := (activeIndex + attempt) % len(providers)
+		p := providers[idx]
 		resp, err := p.Chat(ctx, req)
 		if err == nil {
+			pm.mu.Lock()
+			pm.activeIndex = idx
+			pm.mu.Unlock()
 			return resp, nil
 		}
 		lastErr = err
-		if i < len(providers)-1 {
+		if attempt < len(providers)-1 {
 			slog.Warn("provider failed, falling back", "provider", p.Name(), "error", err)
 		}
 	}
 	return ChatResponse{}, fmt.Errorf("all providers failed, last error: %w", lastErr)
+}
+
+// FetchContextWindow 向当前活跃 provider 查询模型 context window，失败时使用内部全局属性倖退尤其是配置默认延迟
+func (pm *ProviderManager) FetchContextWindow(ctx context.Context) int {
+	pm.mu.RLock()
+	providers := make([]Provider, len(pm.providers))
+	copy(providers, pm.providers)
+	activeIndex := pm.activeIndex
+	fallback := pm.fallbackContextWindow
+	pm.mu.RUnlock()
+	if fallback <= 0 {
+		fallback = 128000
+	}
+	if len(providers) == 0 {
+		return fallback
+	}
+	if activeIndex < 0 || activeIndex >= len(providers) {
+		activeIndex = 0
+	}
+	window, err := providers[activeIndex].FetchContextWindow(ctx, "")
+	if err != nil || window <= 0 {
+		if err != nil {
+			slog.Warn("fetch context window failed, using fallback", "provider", providers[activeIndex].Name(), "error", err, "fallback", fallback)
+		}
+		return fallback
+	}
+	return window
 }
 
 // PrimaryModel 返回主服务商的模型名
@@ -177,10 +275,14 @@ func (pm *ProviderManager) PrimaryModel() string {
 	if len(pm.providers) == 0 {
 		return "unknown"
 	}
-	if p, ok := pm.providers[0].(*OpenAIProvider); ok {
+	index := pm.activeIndex
+	if index < 0 || index >= len(pm.providers) {
+		index = 0
+	}
+	if p, ok := pm.providers[index].(*OpenAIProvider); ok {
 		return p.model
 	}
-	return pm.providers[0].Name()
+	return pm.providers[index].Name()
 }
 
 // Providers 返回所有服务商的基本信息
@@ -196,4 +298,30 @@ func (pm *ProviderManager) Providers() []ProviderInfo {
 		infos = append(infos, info)
 	}
 	return infos
+}
+
+// parseContextWindow 从 JSON 标准属性中提取整型 context window，支持 int/float64/string 三种格式
+func parseContextWindow(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return 0
+	}
+	var asInt int
+	if err := json.Unmarshal(raw, &asInt); err == nil {
+		return asInt
+	}
+	var asFloat float64
+	if err := json.Unmarshal(raw, &asFloat); err == nil {
+		return int(asFloat)
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		asString = strings.TrimSpace(asString)
+		if asString == "" {
+			return 0
+		}
+		var parsed int
+		_, _ = fmt.Sscanf(asString, "%d", &parsed)
+		return parsed
+	}
+	return 0
 }

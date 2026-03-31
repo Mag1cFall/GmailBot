@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 )
 
@@ -64,17 +63,4 @@ func TestGetOrCreateActiveSessionByIdentityStoresPlatformFields(t *testing.T) {
 	if session.TgUserID >= 0 {
 		t.Fatalf("expected synthetic key, got %d", session.TgUserID)
 	}
-}
-
-func newTestStore(t *testing.T) *Store {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "test.db")
-	st, err := Init(path)
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = st.Close()
-	})
-	return st
 }

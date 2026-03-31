@@ -2,7 +2,6 @@ package tgbot
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"gmailbot/internal/gmail"
 	"gmailbot/internal/platform"
 	"gmailbot/internal/store"
+	"gmailbot/internal/testutil"
 )
 
 func TestSchedulerPollNewEmailsUsesInitializationAndAIFilter(t *testing.T) {
@@ -129,12 +129,5 @@ func (f *fakeSchedulerAgent) GenerateDailyDigest(ctx context.Context, tgUserID i
 
 func newSchedulerStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Init(filepath.Join(t.TempDir(), "scheduler.db"))
-	if err != nil {
-		t.Fatalf("init store failed: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = st.Close()
-	})
-	return st
+	return testutil.NewTestStore(t)
 }
