@@ -104,7 +104,14 @@ func (a *Adapter) handleText(ctx context.Context, handler baseplatform.MessageHa
 		if isConfigCommand(msg.Text) {
 			markup = a.buildConfigMarkup()
 		} else if a.app.HasPendingDraft(c.Sender().ID) {
-			markup = a.buildSendDraftMarkup()
+			if err := a.sendToChat(ctx, c.Recipient(), resp, nil); err != nil {
+				return err
+			}
+			draftResp := baseplatform.UnifiedResponse{Markdown: true}
+			if draft, ok := a.app.PendingDraftStore().Get(c.Sender().ID); ok {
+				draftResp.Text = fmt.Sprintf("*收件人:* %s\n*主题:* %s\n\n%s", draft.To, draft.Subject, draft.Body)
+			}
+			return a.sendToChat(ctx, c.Recipient(), draftResp, a.buildSendDraftMarkup())
 		}
 		return a.sendToChat(ctx, c.Recipient(), resp, markup)
 	}

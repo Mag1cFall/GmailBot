@@ -176,6 +176,10 @@ func (a *App) HasPendingDraft(tgUserID int64) bool {
 	return ok
 }
 
+func (a *App) PendingDraftStore() *gmail.PendingStore {
+	return a.pendingDraft
+}
+
 func (a *App) HandleDraftActionByIdentity(ctx context.Context, platformName, userID, action string) (platform.UnifiedResponse, error) {
 	userKey, err := a.store.ResolvePlatformUserKey(ctx, platformName, userID)
 	if err != nil {
