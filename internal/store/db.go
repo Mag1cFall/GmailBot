@@ -100,13 +100,17 @@ func (s *Store) migrate(ctx context.Context) error {
 			sent_at VARCHAR(64) NOT NULL DEFAULT '',
 			INDEX idx_reminders_due (sent_at, remind_at)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS platform VARCHAR(32) NOT NULL DEFAULT 'telegram'`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(255) NOT NULL DEFAULT ''`,
-		`ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_push_enabled TINYINT(1) NOT NULL DEFAULT 0`,
-		`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS platform VARCHAR(32) NOT NULL DEFAULT 'telegram'`,
-		`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id VARCHAR(255) NOT NULL DEFAULT ''`,
-		`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS persona_name VARCHAR(255) NOT NULL DEFAULT ''`,
+	}
+	alterStatements := []string{
+		`ALTER TABLE users ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT 'telegram'`,
+		`ALTER TABLE users ADD COLUMN user_id VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN ai_push_enabled TINYINT(1) NOT NULL DEFAULT 0`,
+		`ALTER TABLE sessions ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT 'telegram'`,
+		`ALTER TABLE sessions ADD COLUMN user_id VARCHAR(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE sessions ADD COLUMN persona_name VARCHAR(255) NOT NULL DEFAULT ''`,
 		`ALTER TABLE sessions MODIFY COLUMN messages LONGTEXT NOT NULL`,
+	}
+	updateStatements := []string{
 		`UPDATE users SET platform = 'telegram' WHERE platform IS NULL OR TRIM(platform) = ''`,
 		`UPDATE users SET user_id = CAST(tg_user_id AS CHAR) WHERE user_id IS NULL OR TRIM(user_id) = ''`,
 		`UPDATE users SET created_at = ? WHERE created_at IS NULL OR TRIM(created_at) = ''`,
@@ -126,6 +130,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		if query == "" {
 			continue
 		}
+		if _, err := s.db.ExecContext(ctx, query); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range alterStatements {
+		query := strings.TrimSpace(stmt)
+		_, err := s.db.ExecContext(ctx, query)
+		if err != nil && !isMySQLDuplicateColumn(err) {
+			return err
+		}
+	}
+	for _, stmt := range updateStatements {
+		query := strings.TrimSpace(stmt)
+		if query == "" {
+			continue
+		}
 		var err error
 		switch query {
 		case `UPDATE users SET created_at = ? WHERE created_at IS NULL OR TRIM(created_at) = ''`,
@@ -141,4 +161,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func isMySQLDuplicateColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "1060") || strings.Contains(err.Error(), "Duplicate column name")
 }
